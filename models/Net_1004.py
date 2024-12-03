@@ -95,14 +95,29 @@ class Net_1004(torch.nn.Module):
         super(Net_1004, self).__init__()
         self.logger = logger
         self.cfg = cfg
+
+        self.trip_distribution_included = cfg['domain_knowledge_types_included']['trip_distribution']
+        self.depart_freq_included = cfg['domain_knowledge_types_included']['depart_freq']
+        self.traffic_assignment_included = cfg['domain_knowledge_types_included']['traffic_assignment']
+
+        self.four_step_method = cfg['domain_knowledge_loaded']['four_step_method']
+        self.history_distribution = cfg['domain_knowledge_loaded']['history_distribution']
+
         self.additional_section_feature_dim = cfg['model']['additional_section_feature_dim']
         self.additional_frequency_feature_dim = cfg['model']['additional_frequency_feature_dim']
         self.additional_distribution_dim = cfg['model']['additional_distribution_dim']
 
-        self.num_finished_input_dim = cfg['model']['input_dim'] + self.additional_section_feature_dim + self.additional_frequency_feature_dim+self.additional_distribution_dim
-        self.num_unfinished_input_dim = cfg['model']['input_dim'] + self.additional_section_feature_dim + self.additional_frequency_feature_dim+self.additional_distribution_dim
-        self.num_finished_input_dim = cfg['model']['input_dim'] + self.additional_section_feature_dim + self.additional_frequency_feature_dim+self.additional_distribution_dim
-        self.num_unfinished_input_dim = cfg['model']['input_dim'] + self.additional_section_feature_dim + self.additional_frequency_feature_dim+self.additional_distribution_dim
+        self.num_finished_input_dim = cfg['model']['input_dim']
+        self.num_unfinished_input_dim = cfg['model']['input_dim']
+        if self.trip_distribution_included:
+            self.num_finished_input_dim += self.additional_distribution_dim
+            self.num_unfinished_input_dim += self.additional_distribution_dim
+        if self.depart_freq_included:
+            self.num_finished_input_dim += self.additional_frequency_feature_dim
+            self.num_unfinished_input_dim += self.additional_frequency_feature_dim
+        if self.traffic_assignment_included:
+            self.num_finished_input_dim += self.additional_section_feature_dim
+            self.num_unfinished_input_dim += self.additional_section_feature_dim
 
         self.OD = ODNet_att(cfg, logger)
 
@@ -158,14 +173,21 @@ class Net_1004(torch.nn.Module):
         short_his_hidden_od = None
 
         for t, batch in enumerate(sequences):
-            encoder_first_out_od, finished_hidden_od, \
-                long_his_hidden_od, short_his_hidden_od, \
-                enc_first_hidden_od = self.OD.encoder_first_layer(batch,
-                                                                  finished_hidden_od,
-                                                                  long_his_hidden_od,
-                                                                  short_his_hidden_od,
-                                                                  edge_index,
-                                                                  edge_attr)
+            if self.history_distribution:
+                encoder_first_out_od, finished_hidden_od, \
+                    long_his_hidden_od, short_his_hidden_od, \
+                    enc_first_hidden_od = self.OD.encoder_first_layer(batch,
+                                                                      finished_hidden_od,
+                                                                      long_his_hidden_od,
+                                                                      short_his_hidden_od,
+                                                                      edge_index,
+                                                                      edge_attr)
+            else:
+                encoder_first_out_od, finished_hidden_od, \
+                    enc_first_hidden_od = self.OD.encoder_first_layer(batch,
+                                                                      finished_hidden_od,
+                                                                      edge_index,
+                                                                      edge_attr)
 
             enc_hiddens_od[0] = enc_first_hidden_od
 
@@ -259,12 +281,15 @@ class Net_1004(torch.nn.Module):
                 start_idx = data_batch.ptr[j]
                 end_idx = data_batch.ptr[j + 1]
                 x_od_sliced = data_batch.x_od[start_idx:end_idx]
-                if max_shape is None:
-                    max_shape = x_od_sliced.shape[
-                                    1] + self.additional_section_feature_dim + self.additional_frequency_feature_dim + self.additional_distribution_dim
-                else:
-                    max_shape = max(max_shape, x_od_sliced.shape[
-                        1] + self.additional_section_feature_dim + self.additional_frequency_feature_dim + self.additional_distribution_dim)
+                max_shape = x_od_sliced.shape[1]
+                if self.depart_freq_included:
+                    max_shape = max_shape + self.additional_frequency_feature_dim
+                if self.traffic_assignment_included:
+                    max_shape = max_shape + self.additional_section_feature_dim
+                if self.trip_distribution_included:
+                    max_shape = max_shape + self.additional_distribution_dim
+                break
+            break
 
         for i, data_batch in enumerate(sequences):
             data_batch_y = sequences_y[i]
@@ -276,13 +301,13 @@ class Net_1004(torch.nn.Module):
                 padding_size = max_shape - data_batch_new.x_od.shape[1]
                 data_batch_new.x_od = F.pad(data_batch_new.x_od, (0, padding_size), "constant", 0)
 
-            if data_batch_new.history.shape[1] < max_shape:
-                padding_size = max_shape - data_batch_new.history.shape[1]
-                data_batch_new.history = F.pad(data_batch_new.history, (0, padding_size), "constant", 0)
-
-            if data_batch_new.yesterday.shape[1] < max_shape:
-                padding_size = max_shape - data_batch_new.yesterday.shape[1]
-                data_batch_new.yesterday = F.pad(data_batch_new.yesterday, (0, padding_size), "constant", 0)
+            if self.history_distribution:
+                if data_batch_new.history.shape[1] < max_shape:
+                    padding_size = max_shape - data_batch_new.history.shape[1]
+                    data_batch_new.history = F.pad(data_batch_new.history, (0, padding_size), "constant", 0)
+                if data_batch_new.yesterday.shape[1] < max_shape:
+                    padding_size = max_shape - data_batch_new.yesterday.shape[1]
+                    data_batch_new.yesterday = F.pad(data_batch_new.yesterday, (0, padding_size), "constant", 0)
 
             for j in range(num_graphs):
                 start_idx = data_batch.ptr[j]
@@ -292,153 +317,160 @@ class Net_1004(torch.nn.Module):
                 edge_attr = data_batch.edge_attr[
                     (data_batch.edge_index[0] >= start_idx) & (data_batch.edge_index[0] < end_idx)]
                 x_od_sliced = data_batch.x_od[start_idx:end_idx]
-                unfinished_sliced = data_batch.unfinished[start_idx:end_idx]
-                history_sliced = data_batch.history[start_idx:end_idx]
-                yesterday_sliced = data_batch.yesterday[start_idx:end_idx]
-                PINN_od_features_sliced = data_batch.PINN_od_features[start_idx:end_idx]
-                PINN_od_additional_features_sliced = data_batch.PINN_od_additional_features[j * num_graphs:(j+1) * num_graphs]
-                OD_feature_array_sliced = data_batch.OD_feature_array[start_idx:end_idx]
-                # OD_path_compressed_array_sliced=data_batch.OD_path_compressed_array[start_idx:end_idx]
-                Time_DepartFreDic_Array_sliced = data_batch.Time_DepartFreDic_Array[start_idx:end_idx]
-                #repeated_sparse_2D_tensors_sliced = data_batch.repeated_sparse_2D_tensors[j]
-                #repeated_sparse_3D_tensors_sliced = data_batch.repeated_sparse_3D_tensors[j]
-                repeated_sparse_5D_tensors_sliced = data_batch.repeated_sparse_5D_tensors[j]
+                if self.history_distribution:
+                    unfinished_sliced = data_batch.unfinished[start_idx:end_idx]
+                    history_sliced = data_batch.history[start_idx:end_idx]
+                    yesterday_sliced = data_batch.yesterday[start_idx:end_idx]
+                if self.depart_freq_included:
+                    Time_DepartFreDic_Array_sliced = data_batch.Time_DepartFreDic_Array[start_idx:end_idx]
+                if self.traffic_assignment_included:
+                    repeated_sparse_5D_tensors_sliced = data_batch.repeated_sparse_5D_tensors[j]
+                if self.trip_distribution_included:
+                    PINN_od_features_sliced = data_batch.PINN_od_features[start_idx:end_idx]
+                    PINN_od_additional_features_sliced = data_batch.PINN_od_additional_features[
+                                                         j * num_graphs:(j + 1) * num_graphs]
+                    OD_feature_array_sliced = data_batch.OD_feature_array[start_idx:end_idx]
+                    if isinstance(OD_feature_array_sliced, np.ndarray):
+                        OD_feature_array_sliced = torch.from_numpy(OD_feature_array_sliced).float().to(self.device)
 
-                if isinstance(OD_feature_array_sliced, np.ndarray):
-                    OD_feature_array_sliced = torch.from_numpy(OD_feature_array_sliced).float().to(
-                        self.device)
-                # if isinstance(OD_path_compressed_array_sliced, np.ndarray):
-                # OD_path_compressed_array_sliced = torch.from_numpy(OD_path_compressed_array_sliced).float().to(
-                # self.utility_layer.weights.device)
+                if self.traffic_assignment_included:
+                    # Step 1: Compute utility
+                    utility = self.utility_layer(OD_feature_array_sliced)  # shape: (origins, destinations, paths)
 
-                # Step 1: Compute utility
-                utility = self.utility_layer(OD_feature_array_sliced)  # shape: (origins, destinations, paths)
+                    # Step 2: Compute possibility using Logit
+                    OD_path_possibility = self.logit_layer(utility)  # shape: (origins, destinations, paths)
 
-                # Step 2: Compute possibility using Logit
-                OD_path_possibility = self.logit_layer(utility)  # shape: (origins, destinations, paths)
+                    # Step 3: Compute OD_section_possibility
+                    num_origins, num_destinations, num_paths = OD_path_possibility.size()
+                    num_stations = self.num_nodes
+                    OD_section_possibility = torch.zeros(num_origins, num_stations, num_stations,
+                                                         device=self.device)
+                    import time
+                    start_time = time.time()
+                    simplified = 1541543154
+                    repeated_sparse_5D_tensors_sliced = repeated_sparse_5D_tensors_sliced[0][0].to(self.device)
+                    repeated_sparse_5D_tensors_sliced = repeated_sparse_5D_tensors_sliced.to_dense()
+                    if simplified == 1541543154:
+                        OD_path_possibility_expanded = OD_path_possibility.unsqueeze(3)
+                        OD_path_possibility_5D = OD_path_possibility_expanded.expand(154, 154, 3, 154)
+                        OD_path_possibility_5D = OD_path_possibility_5D.to(self.device)
+                        torch.cuda.empty_cache()
+                        repeated_sparse_5D_tensors_sliced = repeated_sparse_5D_tensors_sliced.sum(dim=-1)
+                    elif simplified == 1541543154154:
+                        OD_path_possibility_expanded = OD_path_possibility.unsqueeze(3).unsqueeze(4)
+                        OD_path_possibility_5D = OD_path_possibility_expanded.expand(154, 154, 3, 154, 154)
+                        OD_path_possibility_5D = OD_path_possibility_5D.to(self.device)
+                        torch.cuda.empty_cache()
+                    elif simplified == 1541543:
+                        OD_path_possibility_expanded = OD_path_possibility
+                        OD_path_possibility_5D = OD_path_possibility_expanded.expand(154, 154, 3)
+                        OD_path_possibility_5D = OD_path_possibility_5D.to(self.device)
+                        torch.cuda.empty_cache()
+                        repeated_sparse_5D_tensors_sliced = repeated_sparse_5D_tensors_sliced.sum(dim=-1)
+                        repeated_sparse_5D_tensors_sliced = repeated_sparse_5D_tensors_sliced.sum(dim=-1)
 
-                # Step 3: Compute OD_section_possibility
-                num_origins, num_destinations, num_paths = OD_path_possibility.size()
-                num_stations = self.num_nodes
-                OD_section_possibility = torch.zeros(num_origins, num_stations, num_stations,
-                                                     device=self.device)
-                import time
-                start_time = time.time()
-                simplified = 1541543154
-                repeated_sparse_5D_tensors_sliced = repeated_sparse_5D_tensors_sliced[0][0].to(self.device)
-                repeated_sparse_5D_tensors_sliced = repeated_sparse_5D_tensors_sliced.to_dense()
-                if simplified == 1541543154:
-                    OD_path_possibility_expanded = OD_path_possibility.unsqueeze(3)
-                    OD_path_possibility_5D = OD_path_possibility_expanded.expand(154, 154, 3, 154)
-                    OD_path_possibility_5D = OD_path_possibility_5D.to(self.device)
-                    torch.cuda.empty_cache()
-                    repeated_sparse_5D_tensors_sliced = repeated_sparse_5D_tensors_sliced.sum(dim=-1)
-                elif simplified == 1541543154154:
-                    OD_path_possibility_expanded = OD_path_possibility.unsqueeze(3).unsqueeze(4)
-                    OD_path_possibility_5D = OD_path_possibility_expanded.expand(154, 154, 3, 154, 154)
-                    OD_path_possibility_5D = OD_path_possibility_5D.to(self.device)
-                    torch.cuda.empty_cache()
-                elif simplified == 1541543:
-                    OD_path_possibility_expanded = OD_path_possibility
-                    OD_path_possibility_5D = OD_path_possibility_expanded.expand(154, 154, 3)
-                    OD_path_possibility_5D = OD_path_possibility_5D.to(self.device)
-                    torch.cuda.empty_cache()
-                    repeated_sparse_5D_tensors_sliced = repeated_sparse_5D_tensors_sliced.sum(dim=-1)
-                    repeated_sparse_5D_tensors_sliced = repeated_sparse_5D_tensors_sliced.sum(dim=-1)
+                    OD_section_possibility = torch.mul(repeated_sparse_5D_tensors_sliced, OD_path_possibility_5D)
+                    flattened_od_section = OD_section_possibility.view(num_origins, -1)
+                    end_time = time.time()
+                    execution_time = end_time - start_time
+                    # print(f"execution_time: {execution_time} 秒")
 
-                OD_section_possibility = torch.mul(repeated_sparse_5D_tensors_sliced, OD_path_possibility_5D)
-                flattened_od_section = OD_section_possibility.view(num_origins, -1)
-                end_time = time.time()
-                execution_time = end_time - start_time
-                # print(f"execution_time: {execution_time} 秒")
+                    # Step 4: Process OD_section_possibility through autoencoder_od_feature
+                    latent_features, _ = self.autoencoder_od_feature(flattened_od_section)
 
-                # Step 4: Process OD_section_possibility through autoencoder_od_feature
-                latent_features, _ = self.autoencoder_od_feature(flattened_od_section)
+                if self.trip_distribution_included:
+                    # Step 5: Trip distribution
+                    trip_distribution_dic = {}
+                    device_cpu = torch.device('cpu')
+                    zero_tensor = torch.zeros((self.seq_len, self.num_nodes), device=self.device)
+                    nested_list_with_arrays = [zero_tensor[i].cpu().numpy() for i in range(1)]
+                    signal_dict = {
+                        'features': [PINN_od_features_sliced.cpu().numpy()],
+                        'targets': nested_list_with_arrays,
+                        'additional_feature': [PINN_od_additional_features_sliced.cpu().numpy()],
+                        'edge_index': edge_index,
+                        'edge_weight': edge_attr
+                    }
+                    trip_gnr_signal = StaticGraphTemporalSignal(
+                        features=signal_dict["features"],
+                        targets=signal_dict["targets"],
+                        additional_feature1=signal_dict["additional_feature"],
+                        edge_index=signal_dict["edge_index"].clone().cpu(),
+                        edge_weight=signal_dict["edge_weight"].clone().cpu()
+                    )
 
-                # Step 5: Trip distribution
-                trip_distribution_dic = {}
-                device_cpu = torch.device('cpu')
-                zero_tensor = torch.zeros((self.seq_len, self.num_nodes), device=self.device)
-                nested_list_with_arrays = [zero_tensor[i].cpu().numpy() for i in range(1)]
-                signal_dict = {
-                    'features': [PINN_od_features_sliced.cpu().numpy()],
-                    'targets': nested_list_with_arrays,
-                    'additional_feature': [PINN_od_additional_features_sliced.cpu().numpy()],
-                    'edge_index': edge_index,
-                    'edge_weight': edge_attr
-                }
-                trip_gnr_signal = StaticGraphTemporalSignal(
-                    features=signal_dict["features"],
-                    targets=signal_dict["targets"],
-                    additional_feature1=signal_dict["additional_feature"],
-                    edge_index=signal_dict["edge_index"].clone().cpu(),
-                    edge_weight=signal_dict["edge_weight"].clone().cpu()
-                )
+                    hyperparams_path = os.path.join(self.project_root, f"data{os.path.sep}suzhou{os.path.sep}",
+                                                    f'hyperparameters.pkl')
+                    with open(hyperparams_path, 'rb') as f:
+                        hyperparameters = pickle.load(f)
 
-                od_type = "OD"
-                hyperparams_path = os.path.join(self.project_root, f"data{os.path.sep}suzhou{os.path.sep}",
-                                                f'{od_type.upper()}{os.path.sep}hyperparameters.pkl')
-                with open(hyperparams_path, 'rb') as f:
-                    hyperparameters = pickle.load(f)
+                    RGCN_node_features = hyperparameters['RGCN_node_features']
+                    RGCN_hidden_units = hyperparameters['RGCN_hidden_units']
+                    RGCN_output_dim = hyperparameters['RGCN_output_dim']
+                    RGCN_K = hyperparameters['RGCN_K']
 
-                RGCN_node_features = hyperparameters['RGCN_node_features']
-                RGCN_hidden_units = hyperparameters['RGCN_hidden_units']
-                RGCN_output_dim = hyperparameters['RGCN_output_dim']
-                RGCN_K = hyperparameters['RGCN_K']
+                    for str_prdc_attr in ("prdc", "attr"):
+                        RecurrentGCN_trip_prdc = RecurrentGCN(node_features=RGCN_node_features,
+                                                              hidden_units=RGCN_hidden_units,
+                                                              output_dim=RGCN_output_dim,
+                                                              K=RGCN_K)
+                        RecurrentGCN_model_path = os.path.join(self.project_root, f"data{os.path.sep}suzhou{os.path.sep}",
+                                                               f'{str_prdc_attr}_RecurrentGCN_model.pth')
+                        RecurrentGCN_trip_prdc.load_state_dict(torch.load(RecurrentGCN_model_path))
+                        RecurrentGCN_trip_prdc.eval()
+                        RecurrentGCN_trip_prdc.to(self.device)
+                        with torch.no_grad():
+                            for snap_time, snapshot in enumerate(trip_gnr_signal):
+                                snapshot_x = snapshot.x.to(device_cpu)
+                                snapshot_edge_index = snapshot.edge_index.to(device_cpu)
+                                snapshot_edge_attr = snapshot.edge_attr.to(device_cpu)
+                                RecurrentGCN_trip_prdc.to(device_cpu)
+                                y_hat = RecurrentGCN_trip_prdc(snapshot_x, snapshot_edge_index, snapshot_edge_attr)
+                                trip_distribution_dic[str_prdc_attr] = y_hat
 
-                for str_prdc_attr in ("prdc", "attr"):
-                    RecurrentGCN_trip_prdc = RecurrentGCN(node_features=RGCN_node_features,
-                                                          hidden_units=RGCN_hidden_units,
-                                                          output_dim=RGCN_output_dim,
-                                                          K=RGCN_K)
-                    od_type = "OD"
-                    RecurrentGCN_model_path = os.path.join(self.project_root, f"data{os.path.sep}suzhou{os.path.sep}",
-                                                           f'{od_type.upper()}{os.path.sep}{str_prdc_attr}_RecurrentGCN_model.pth')
-                    RecurrentGCN_trip_prdc.load_state_dict(torch.load(RecurrentGCN_model_path))
-                    RecurrentGCN_trip_prdc.eval()
-                    RecurrentGCN_trip_prdc.to(self.device)
-                    with torch.no_grad():
-                        for snap_time, snapshot in enumerate(trip_gnr_signal):
-                            snapshot_x = snapshot.x.to(device_cpu)
-                            snapshot_edge_index = snapshot.edge_index.to(device_cpu)
-                            snapshot_edge_attr = snapshot.edge_attr.to(device_cpu)
-                            RecurrentGCN_trip_prdc.to(device_cpu)
-                            y_hat = RecurrentGCN_trip_prdc(snapshot_x, snapshot_edge_index, snapshot_edge_attr)
-                            trip_distribution_dic[str_prdc_attr] = y_hat
+                    def load_from_pkl(filename):
+                        with open(filename, 'rb') as file:
+                            return pickle.load(file)
 
-                def load_from_pkl(filename):
-                    with open(filename, 'rb') as file:
-                        return pickle.load(file)
+                    pkl_filename = os.path.join(self.project_root, f"data{os.path.sep}suzhou", 'trip_generation_trained_params.pkl')
+                    loaded_params = load_from_pkl(pkl_filename)
+                    q_predicted = compute_flow(trip_distribution_dic["prdc"], trip_distribution_dic["attr"],
+                                               self.station_manager['station_distance_matrix'], loaded_params['gamma'], loaded_params['a'], loaded_params['b'])
+                    distribution_features, _ = self.autoencoder_distribution(q_predicted.to(self.device))
 
-                pkl_filename = os.path.join(self.project_root, f"data{os.path.sep}suzhou", 'trip_generation_trained_params.pkl')
-                loaded_params = load_from_pkl(pkl_filename)
-                q_predicted = compute_flow(trip_distribution_dic["prdc"], trip_distribution_dic["attr"],
-                                           self.station_manager['station_distance_matrix'], loaded_params['gamma'], loaded_params['a'], loaded_params['b'])
-                distribution_features, _ = self.autoencoder_distribution(q_predicted.to(self.device))
+                x_od_combined = x_od_sliced
 
-                x_od_combined = torch.cat((x_od_sliced, latent_features), dim=1)
-                x_od_combined = torch.cat((x_od_combined, Time_DepartFreDic_Array_sliced), dim=1)
-                x_od_combined = torch.cat((x_od_combined, distribution_features), dim=1)
-                history_combined = torch.cat((history_sliced, latent_features), dim=1)
-                history_combined = torch.cat((history_combined, Time_DepartFreDic_Array_sliced), dim=1)
-                history_combined = torch.cat((history_combined, distribution_features), dim=1)
-                yesterday_combined = torch.cat((yesterday_sliced, latent_features), dim=1)
-                yesterday_combined = torch.cat((yesterday_combined, Time_DepartFreDic_Array_sliced), dim=1)
-                yesterday_combined = torch.cat((yesterday_combined, distribution_features), dim=1)
+                if self.history_distribution:
+                    history_combined = history_sliced
+                    yesterday_combined = yesterday_sliced
+                if self.traffic_assignment_included:
+                    x_od_combined = torch.cat((x_od_sliced, latent_features), dim=1)
+                    history_combined = torch.cat((history_sliced, latent_features), dim=1)
+                    yesterday_combined = torch.cat((yesterday_sliced, latent_features), dim=1)
+                if self.depart_freq_included:
+                    x_od_combined = torch.cat((x_od_combined, Time_DepartFreDic_Array_sliced), dim=1)
+                    history_combined = torch.cat((history_combined, Time_DepartFreDic_Array_sliced), dim=1)
+                    yesterday_combined = torch.cat((yesterday_combined, Time_DepartFreDic_Array_sliced), dim=1)
+                if self.traffic_assignment_included:
+                    x_od_combined = torch.cat((x_od_combined, distribution_features), dim=1)
+                    history_combined = torch.cat((history_combined, distribution_features), dim=1)
+                    yesterday_combined = torch.cat((yesterday_combined, distribution_features), dim=1)
 
                 current_shape = data_batch_new.x_od[start_idx:end_idx].shape[1]
                 target_shape = x_od_combined.shape[1]
                 if current_shape < target_shape:
                     padding_size = target_shape - current_shape
                     x_od_combined = F.pad(x_od_combined, (0, padding_size), "constant", 0)
-                    history_combined = F.pad(history_combined, (0, padding_size), "constant", 0) if \
-                        history_combined.shape[1] < target_shape else history_combined[:, :target_shape]
-                    yesterday_combined = F.pad(yesterday_combined, (0, padding_size), "constant", 0) if \
-                        yesterday_combined.shape[1] < target_shape else yesterday_combined[:, :target_shape]
+                    if self.history_distribution:
+                        history_combined = F.pad(history_combined, (0, padding_size), "constant", 0) if \
+                            history_combined.shape[1] < target_shape else history_combined[:, :target_shape]
+                        yesterday_combined = F.pad(yesterday_combined, (0, padding_size), "constant", 0) if \
+                            yesterday_combined.shape[1] < target_shape else yesterday_combined[:, :target_shape]
                 data_batch_new.x_od[start_idx:end_idx] = x_od_combined
-                data_batch_new.unfinished[start_idx:end_idx]
-                data_batch_new.history[start_idx:end_idx] = history_combined
-                data_batch_new.yesterday[start_idx:end_idx] = yesterday_combined
+                if self.history_distribution:
+                    data_batch_new.unfinished[start_idx:end_idx]
+                    data_batch_new.history[start_idx:end_idx] = history_combined
+                    data_batch_new.yesterday[start_idx:end_idx] = yesterday_combined
             extended_sequences.append(data_batch_new)
             extended_sequences_y.append(data_batch_y_new)
         edge_index = sequences[0].edge_index.detach()

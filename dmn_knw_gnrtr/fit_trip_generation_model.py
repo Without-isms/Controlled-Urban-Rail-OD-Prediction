@@ -6,13 +6,39 @@ import pickle
 import torch
 from torch.optim import Adam
 
+
+
+#knowledge 1:
+"""Imagine we have a PyTorch tensor with `requires_grad=True` because we want to compute gradients for it:
+
+import torch
+
+x = torch.tensor([1.0, 2.0, 3.0], requires_grad=True)
+y = x ** 2
+
+Here, `y` is computed based on `x`, and since `x` has `requires_grad=True`, `y` will also keep track of gradients. This tracking is essential for backpropagation in machine learning.
+
+However, if we now try to convert `y` to a NumPy array:
+
+y.numpy()
+
+we get an error, because NumPy does not support gradient tracking. To fix this, we first detach `y` from the computation graph using `.detach()`:
+
+y_detached = y.detach()
+
+Now, `y_detached` no longer tracks gradients and can be converted to a NumPy array without any issues:
+
+y_np = y_detached.numpy()
+
+In this way, `.detach()` lets us safely work with NumPy when we no longer need gradient information."""
+
 """def impedance_function(C, gamma):
     return np.power(C, -gamma)"""
 
 def impedance_function(C, gamma):
     C = torch.tensor(C, dtype=torch.float32)
     gamma = torch.tensor(gamma, dtype=torch.float32)
-    return torch.pow(C, -gamma)
+    return torch.pow(C + 1e-6, -gamma)
 
 """def compute_flow(O, D, C, gamma, a, b):
     f_c = impedance_function(C, gamma)
@@ -52,7 +78,9 @@ def objective_function(params, O_data, D_data, C_data, q_obs_data, time_steps):
 
         q_v = compute_flow(O, D, C, gamma, a, b)
 
-        mse = np.mean((q_v - q_obs) ** 2)
+        mse = torch.mean((q_v - torch.tensor(q_obs, dtype=q_v.dtype, device=q_v.device)) ** 2)
+
+        #mse = np.mean((q_v - q_obs) ** 2)
         total_mse += mse
 
     return total_mse
@@ -185,8 +213,8 @@ def fit_trip_generation_model(O_data, D_data, C_data, q_obs_data, time_steps, in
         print(f'Optimal gamma parameter: {optimal_gamma}')
         print(f'Optimal a parameter: {a_fitted}')
         print(f'Optimal b parameter: {b_fitted}')
-        for t, q_pred in enumerate(q_predicted_list):
-            print(f"Fitted flow matrix q_v at time point {t + 1}:")
-            print(q_pred)
+        #for t, q_pred in enumerate(q_predicted_list):
+            #print(f"Fitted flow matrix q_v at time point {t + 1}:")
+            #print(q_pred)
 
     return optimal_gamma, a_fitted, b_fitted, q_predicted_list

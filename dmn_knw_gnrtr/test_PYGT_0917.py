@@ -6,12 +6,12 @@ from torch_geometric_temporal.nn.recurrent import DCRNN
 import os
 
 
-def test_PYGT(base_dir, prefix, od_type, str_prdc_attr):
-    dir_path = os.path.join(base_dir, f'{od_type.upper()}{os.path.sep}{prefix}_test_dataset.pkl')
+def test_PYGT(base_dir, prefix, str_prdc_attr):
+    dir_path = os.path.join(base_dir, f'{prefix}_test_dataset.pkl')
     with open(dir_path, 'rb') as f:
         test_dataset = pickle.load(f, errors='ignore')
 
-    hyperparams_path = os.path.join(base_dir, f'{od_type.upper()}{os.path.sep}hyperparameters.pkl')
+    hyperparams_path = os.path.join(base_dir, f'hyperparameters.pkl')
     with open(hyperparams_path, 'rb') as f:
         hyperparameters = pickle.load(f)
 
@@ -35,7 +35,7 @@ def test_PYGT(base_dir, prefix, od_type, str_prdc_attr):
     RecurrentGCN_model = RecurrentGCN(node_features=RGCN_node_features, hidden_units=RGCN_hidden_units, output_dim=RGCN_output_dim,
                                       K=RGCN_K)
 
-    model_path = os.path.join(base_dir, f"{od_type.upper()}{os.path.sep}{str_prdc_attr}_RecurrentGCN_model.pth")
+    model_path = os.path.join(base_dir, f"{str_prdc_attr}_RecurrentGCN_model.pth")
     RecurrentGCN_model.load_state_dict(torch.load(model_path))
 
     RecurrentGCN_model.eval()
@@ -53,8 +53,7 @@ def test_PYGT(base_dir, prefix, od_type, str_prdc_attr):
     print("MSE: {:.4f}".format(cost_PINN))
 
 
-"""od_type="OD"
-base_dir=f"data{os.path.sep}suzhou{os.path.sep}"
+"""base_dir=f"data{os.path.sep}suzhou{os.path.sep}"
 prefix="train"
 str_prdc_attr=[]
-test_PYGT(base_dir,prefix,od_type,str_prdc_attr)"""
+test_PYGT(base_dir,prefix,str_prdc_attr)"""

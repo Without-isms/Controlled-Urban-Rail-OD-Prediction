@@ -1,4 +1,42 @@
 import os
+import pickle
+
+from metro_data_convertor.Find_project_root import Find_project_root
+import os
+cpu_count = os.cpu_count()
+
+
+import timeit
+
+sections_empty = {}
+
+# 测试不同方法的速度
+methods = {
+    "if sections == {}": "sections_empty == {}",
+    "if not sections": "not sections_empty",
+    "if len(sections) == 0": "len(sections_empty) == 0",
+    "if not bool(sections)": "not bool(sections_empty)"
+}
+
+for method, stmt in methods.items():
+    time = timeit.timeit(stmt, globals=globals(), number=10**7)
+    print(f"{method}: {time:.6f} seconds")
+
+
+
+prefix="val"
+project_root = Find_project_root()
+base_dir = os.path.join(project_root, f"data{os.path.sep}suzhou")
+
+train = os.path.join(base_dir, f'train.pkl')
+with open(train, 'rb') as f:
+    train = pickle.load(f)
+
+
+Time_DepartFreDic = os.path.join(base_dir, f'Time_DepartFreDic.pkl')
+with open(Time_DepartFreDic, 'rb') as f:
+    Time_DepartFreDic = pickle.load(f)
+    print(Time_DepartFreDic.keys())
 
 def count_python_lines(directory, exclude_dirs=None):
     total_lines = 0

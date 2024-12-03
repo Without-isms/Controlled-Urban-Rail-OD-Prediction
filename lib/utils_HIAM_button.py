@@ -10,29 +10,43 @@ from torch_geometric.data import Batch, Data
 import tempfile
 import gc
 import shutil
+import argparse
+import yaml
 
-ENABLE_2D_3D_4D_COMPRESSED_FEATURES = False
-ENABLE_5D_FEATURES = True
+try:
+    from yaml import CLoader as Loader, CDumper as Dumper
+except ImportError:
+    from yaml import Loader, Dumper
+
+def read_cfg_file(filename):
+    with open(filename, 'r') as ymlfile:
+        cfg = yaml.load(ymlfile, Loader=Loader)
+    return cfg
+
+#args = argparse.Namespace(config_filename=f'data{os.path.sep}config{os.path.sep}train_sz_dim26_units96_h4c512.yaml')
+args = argparse.Namespace(config_filename=f'data{os.path.sep}config{os.path.sep}train_M_R_1119.yaml')
+cfg = read_cfg_file(args.config_filename)
+
+ENABLE_2D_3D_4D_COMPRESSED_FEATURES = cfg['domain_knowledge']['ENABLE_2D_3D_4D_COMPRESSED_FEATURES']
+ENABLE_5D_FEATURES = cfg['domain_knowledge']['ENABLE_5D_FEATURES']
+four_step_method_included = cfg['domain_knowledge_loaded']['four_step_method']
+history_distribution_included = cfg['domain_knowledge_loaded']['history_distribution']
 
 class DataLoader(object):
     def __init__(self,
                  x_od,
                  y_od,
-                 unfinished,
-                 history,
-                 yesterday,
                  xtime,
                  ytime,
-                 PINN_od_features,
-                 PINN_od_additional_features,
-                 OD_feature_array,
-                 Time_DepartFreDic_Array,
                  batch_size,
-                 repeated_sparse_2D_tensors=None,
-                 repeated_sparse_3D_tensors=None,
-                 repeated_sparse_4D_tensors=None,
+                 unfinished=None,
+                 history=None,
+                 yesterday=None,
+                 PINN_od_features=None,
+                 PINN_od_additional_features=None,
+                 OD_feature_array=None,
+                 Time_DepartFreDic_Array=None,
                  repeated_sparse_5D_tensors=None,
-                 # OD_path_compressed_array=None,
                  pad_with_last_sample=True,
                  shuffle=False):
         """
@@ -51,21 +65,18 @@ class DataLoader(object):
             xtime_padding = np.repeat(xtime[-1:], num_padding, axis=0)
             y_od_padding = np.repeat(y_od[-1:], num_padding, axis=0)
             ytime_padding = np.repeat(ytime[-1:], num_padding, axis=0)
-            PINN_od_features_padding = np.repeat(PINN_od_features[-1:], num_padding, axis=0)
-            PINN_od_additional_features_padding = np.repeat(PINN_od_additional_features[-1:], num_padding, axis=0)
-            OD_feature_array_padding = np.repeat(OD_feature_array[-1:], num_padding, axis=0)
-            Time_DepartFreDic_Array_padding = np.repeat(Time_DepartFreDic_Array[-1:], num_padding, axis=0)
 
-            if ENABLE_2D_3D_4D_COMPRESSED_FEATURES:
-                repeated_sparse_2D_padding = [repeated_sparse_2D_tensors[-1]] * num_padding
-                repeated_sparse_3D_padding = [repeated_sparse_3D_tensors[-1]] * num_padding
-                repeated_sparse_4D_padding = [repeated_sparse_4D_tensors[-1]] * num_padding
-                #OD_path_compressed_array_padding = np.repeat(OD_path_compressed_array[-1:], num_padding, axis=0)
-
-                repeated_sparse_2D_tensors = repeated_sparse_2D_tensors + repeated_sparse_2D_padding
-                repeated_sparse_3D_tensors = repeated_sparse_3D_tensors + repeated_sparse_3D_padding
-                repeated_sparse_4D_tensors = repeated_sparse_4D_tensors + repeated_sparse_4D_padding
-                #OD_path_compressed_array = np.concatenate([OD_path_compressed_array, OD_path_compressed_array_padding],axis=0)
+            if four_step_method_included:
+                PINN_od_features_padding = np.repeat(PINN_od_features[-1:], num_padding, axis=0)
+                PINN_od_additional_features_padding = np.repeat(PINN_od_additional_features[-1:], num_padding, axis=0)
+                OD_feature_array_padding = np.repeat(OD_feature_array[-1:], num_padding, axis=0)
+                Time_DepartFreDic_Array_padding = np.repeat(Time_DepartFreDic_Array[-1:], num_padding, axis=0)
+                PINN_od_features = np.concatenate([PINN_od_features, PINN_od_features_padding], axis=0)
+                PINN_od_additional_features = np.concatenate(
+                    [PINN_od_additional_features, PINN_od_additional_features_padding], axis=0)
+                OD_feature_array = np.concatenate([OD_feature_array, OD_feature_array_padding], axis=0)
+                Time_DepartFreDic_Array = np.concatenate([Time_DepartFreDic_Array, Time_DepartFreDic_Array_padding],
+                                                         axis=0)
 
             if ENABLE_5D_FEATURES and repeated_sparse_5D_tensors is not None:
                 repeated_sparse_5D_padding = [repeated_sparse_5D_tensors[-1]] * num_padding
@@ -75,38 +86,34 @@ class DataLoader(object):
             xtime = np.concatenate([xtime, xtime_padding], axis=0)
             y_od = np.concatenate([y_od, y_od_padding], axis=0)
             ytime = np.concatenate([ytime, ytime_padding], axis=0)
-            PINN_od_features = np.concatenate([PINN_od_features, PINN_od_features_padding], axis=0)
-            PINN_od_additional_features = np.concatenate([PINN_od_additional_features, PINN_od_additional_features_padding], axis=0)
-            PINN_od_features = np.concatenate([PINN_od_features, PINN_od_features_padding], axis=0)
-            OD_feature_array = np.concatenate([OD_feature_array, OD_feature_array_padding], axis=0)
-            Time_DepartFreDic_Array = np.concatenate([Time_DepartFreDic_Array, Time_DepartFreDic_Array_padding], axis=0)
-            unfi_num_padding = (batch_size - (len(unfinished) % batch_size)) % batch_size
-            unfinished_padding = np.repeat(unfinished[-1:], unfi_num_padding, axis=0)
-            unfinished = np.concatenate([unfinished, unfinished_padding], axis=0)
-            history_num_padding = (batch_size - (len(history) % batch_size)) % batch_size
-            history_padding = np.repeat(history[-1:], history_num_padding, axis=0)
-            history = np.concatenate([history, history_padding], axis=0)
-            yesterday_num_padding = (batch_size - (len(yesterday) % batch_size)) % batch_size
-            yesterday_padding = np.repeat(yesterday[-1:], yesterday_num_padding, axis=0)
-            yesterday = np.concatenate([yesterday, yesterday_padding], axis=0)
+
+            if history_distribution_included and history_distribution_included is not None:
+                unfi_num_padding = (batch_size - (len(unfinished) % batch_size)) % batch_size
+                unfinished_padding = np.repeat(unfinished[-1:], unfi_num_padding, axis=0)
+                unfinished = np.concatenate([unfinished, unfinished_padding], axis=0)
+                history_num_padding = (batch_size - (len(history) % batch_size)) % batch_size
+                history_padding = np.repeat(history[-1:], history_num_padding, axis=0)
+                history = np.concatenate([history, history_padding], axis=0)
+                yesterday_num_padding = (batch_size - (len(yesterday) % batch_size)) % batch_size
+                yesterday_padding = np.repeat(yesterday[-1:], yesterday_num_padding, axis=0)
+                yesterday = np.concatenate([yesterday, yesterday_padding], axis=0)
+
         self.size = len(x_od)
         self.num_batch = int(self.size // self.batch_size)
         self.x_od = x_od
         self.y_od = y_od
-        self.unfinished = unfinished
-        self.history = history
-        self.yesterday = yesterday
         self.xtime = xtime
         self.ytime = ytime
-        self.PINN_od_features = PINN_od_features
-        self.PINN_od_additional_features = PINN_od_additional_features
-        self.OD_feature_array = OD_feature_array
-        self.Time_DepartFreDic_Array = Time_DepartFreDic_Array
-        if ENABLE_2D_3D_4D_COMPRESSED_FEATURES:
-            self.repeated_sparse_2D_tensors = repeated_sparse_2D_tensors
-            self.repeated_sparse_3D_tensors = repeated_sparse_3D_tensors
-            self.repeated_sparse_4D_tensors = repeated_sparse_4D_tensors
-            #self.OD_path_compressed_array = OD_path_compressed_array
+
+        if history_distribution_included:
+            self.unfinished = unfinished
+            self.history = history
+            self.yesterday = yesterday
+        if four_step_method_included:
+            self.PINN_od_features = PINN_od_features
+            self.PINN_od_additional_features = PINN_od_additional_features
+            self.OD_feature_array = OD_feature_array
+            self.Time_DepartFreDic_Array = Time_DepartFreDic_Array
         if ENABLE_5D_FEATURES and repeated_sparse_5D_tensors is not None:
             self.repeated_sparse_5D_tensors = repeated_sparse_5D_tensors
 
@@ -147,31 +154,30 @@ class DataLoader(object):
             self.y_od = apply_permutation_in_chunks_memmap(self.y_od, permutation, chunk_size, 'y_od.dat', temp_dir)
             self.xtime = apply_permutation_in_chunks_memmap(self.xtime, permutation, chunk_size, 'xtime.dat', temp_dir)
             self.ytime = apply_permutation_in_chunks_memmap(self.ytime, permutation, chunk_size, 'ytime.dat', temp_dir)
-            self.PINN_od_features = apply_permutation_in_chunks_memmap(self.PINN_od_features, permutation, chunk_size,
-                                                                       'PINN_od_features.dat', temp_dir)
-            self.PINN_od_additional_features = apply_permutation_in_chunks_memmap(self.PINN_od_additional_features,
-                                                                                  permutation, chunk_size,
-                                                                                  'PINN_od_additional_features.dat',
-                                                                                  temp_dir)
-            self.OD_feature_array = apply_permutation_in_chunks_memmap(self.OD_feature_array, permutation, chunk_size,
-                                                                       'OD_feature_array.dat', temp_dir)
-            self.unfinished = apply_permutation_in_chunks_memmap(self.unfinished, permutation, chunk_size,
-                                                                 'unfinished.dat', temp_dir)
-            self.history = apply_permutation_in_chunks_memmap(self.history, permutation, chunk_size, 'history.dat',
-                                                              temp_dir)
-            self.yesterday = apply_permutation_in_chunks_memmap(self.yesterday, permutation, chunk_size,
-                                                                'yesterday.dat', temp_dir)
-            self.Time_DepartFreDic_Array = apply_permutation_in_chunks_memmap(self.Time_DepartFreDic_Array, permutation, chunk_size,
-                                                                'Time_DepartFreDic_Array.dat', temp_dir)
 
-            if ENABLE_2D_3D_4D_COMPRESSED_FEATURES:
-                self.repeated_sparse_2D_tensors = [self.repeated_sparse_2D_tensors[i] for i in permutation]
-                self.repeated_sparse_3D_tensors = [self.repeated_sparse_3D_tensors[i] for i in permutation]
-                self.repeated_sparse_4D_tensors = [self.repeated_sparse_4D_tensors[i] for i in permutation]
-                """self.OD_path_compressed_array = apply_permutation_in_chunks_memmap(self.OD_path_compressed_array,
-                                                                                   permutation, chunk_size,
-                                                                                   'OD_path_compressed_array.dat',
-                                                                                   temp_dir)"""
+            if history_distribution_included:
+                self.unfinished = apply_permutation_in_chunks_memmap(self.unfinished, permutation, chunk_size,
+                                                                     'unfinished.dat', temp_dir)
+                self.history = apply_permutation_in_chunks_memmap(self.history, permutation, chunk_size, 'history.dat',
+                                                                  temp_dir)
+                self.yesterday = apply_permutation_in_chunks_memmap(self.yesterday, permutation, chunk_size,
+                                                                    'yesterday.dat', temp_dir)
+
+            if four_step_method_included:
+                self.PINN_od_features = apply_permutation_in_chunks_memmap(self.PINN_od_features, permutation,
+                                                                           chunk_size,
+                                                                           'PINN_od_features.dat', temp_dir)
+                self.PINN_od_additional_features = apply_permutation_in_chunks_memmap(self.PINN_od_additional_features,
+                                                                                      permutation, chunk_size,
+                                                                                      'PINN_od_additional_features.dat',
+                                                                                      temp_dir)
+                self.OD_feature_array = apply_permutation_in_chunks_memmap(self.OD_feature_array, permutation,
+                                                                           chunk_size,
+                                                                           'OD_feature_array.dat', temp_dir)
+                self.Time_DepartFreDic_Array = apply_permutation_in_chunks_memmap(self.Time_DepartFreDic_Array,
+                                                                                  permutation, chunk_size,
+                                                                                  'Time_DepartFreDic_Array.dat',
+                                                                                  temp_dir)
 
             if ENABLE_5D_FEATURES and self.repeated_sparse_5D_tensors is not None:
                 self.repeated_sparse_5D_tensors = [self.repeated_sparse_5D_tensors[i] for i in permutation]
@@ -186,49 +192,39 @@ class DataLoader(object):
         def _wrapper():
             while self.current_ind < self.num_batch:
                 start_ind = self.batch_size * self.current_ind
-                end_ind = min(self.size,
-                              self.batch_size * (self.current_ind + 1))
+                end_ind = min(self.size,self.batch_size * (self.current_ind + 1))
                 x_od_i = self.x_od[start_ind:end_ind, ...]
                 y_od_i = self.y_od[start_ind:end_ind, ...]
-                unfinished_i = self.unfinished[start_ind:end_ind, ...]
-                history_i = self.history[start_ind:end_ind, ...]
-                yesterday_i = self.yesterday[start_ind:end_ind, ...]
                 xtime_i = self.xtime[start_ind:end_ind, ...]
                 ytime_i = self.ytime[start_ind:end_ind, ...]
-                PINN_od_features_i = self.PINN_od_features[start_ind:end_ind, ...]
-                PINN_od_additional_features_i = self.PINN_od_additional_features[start_ind:end_ind, ...]
-                OD_feature_array_i = self.OD_feature_array[start_ind:end_ind, ...]
-                Time_DepartFreDic_Array_i = self.Time_DepartFreDic_Array[start_ind:end_ind, ...]
-                if ENABLE_2D_3D_4D_COMPRESSED_FEATURES:
-                    repeated_sparse_2D_tensors_i = self.repeated_sparse_2D_tensors[start_ind:end_ind]
-                    repeated_sparse_3D_tensors_i = self.repeated_sparse_3D_tensors[start_ind:end_ind]
-                    repeated_sparse_4D_tensors_i = self.repeated_sparse_4D_tensors[start_ind:end_ind]
-                    #OD_path_compressed_array_i = self.OD_path_compressed_array[start_ind:end_ind, ...]
-
+                if history_distribution_included:
+                    unfinished_i = self.unfinished[start_ind:end_ind, ...]
+                    history_i = self.history[start_ind:end_ind, ...]
+                    yesterday_i = self.yesterday[start_ind:end_ind, ...]
+                if four_step_method_included:
+                    PINN_od_features_i = self.PINN_od_features[start_ind:end_ind, ...]
+                    PINN_od_additional_features_i = self.PINN_od_additional_features[start_ind:end_ind, ...]
+                    OD_feature_array_i = self.OD_feature_array[start_ind:end_ind, ...]
+                    Time_DepartFreDic_Array_i = self.Time_DepartFreDic_Array[start_ind:end_ind, ...]
                 if ENABLE_5D_FEATURES and self.repeated_sparse_5D_tensors is not None:
                     repeated_sparse_5D_tensors_i = self.repeated_sparse_5D_tensors[start_ind:end_ind]
 
-                if ENABLE_2D_3D_4D_COMPRESSED_FEATURES and ENABLE_5D_FEATURES:
+                if four_step_method_included and ENABLE_5D_FEATURES and history_distribution_included:
                     yield (x_od_i, y_od_i, unfinished_i, history_i, yesterday_i, xtime_i, ytime_i,
                            PINN_od_features_i, PINN_od_additional_features_i, OD_feature_array_i,
                            Time_DepartFreDic_Array_i,
-                           #OD_path_compressed_array_i,
-                           repeated_sparse_2D_tensors_i, repeated_sparse_3D_tensors_i, repeated_sparse_4D_tensors_i,
                            repeated_sparse_5D_tensors_i)
-                elif ENABLE_2D_3D_4D_COMPRESSED_FEATURES:
-                    yield (x_od_i, y_od_i, unfinished_i, history_i, yesterday_i, xtime_i, ytime_i,
-                           PINN_od_features_i, PINN_od_additional_features_i, OD_feature_array_i,
-                           Time_DepartFreDic_Array_i,
-                           #OD_path_compressed_array_i,
-                           repeated_sparse_2D_tensors_i, repeated_sparse_3D_tensors_i, repeated_sparse_4D_tensors_i)
-                elif ENABLE_5D_FEATURES:
-                    yield (x_od_i, y_od_i, unfinished_i, history_i, yesterday_i, xtime_i, ytime_i,
-                           PINN_od_features_i, PINN_od_additional_features_i, OD_feature_array_i,
-                           Time_DepartFreDic_Array_i, repeated_sparse_5D_tensors_i)
-                else:
+                elif four_step_method_included and history_distribution_included:
                     yield (x_od_i, y_od_i, unfinished_i, history_i, yesterday_i, xtime_i, ytime_i,
                            PINN_od_features_i, PINN_od_additional_features_i, OD_feature_array_i,
                            Time_DepartFreDic_Array_i)
+                elif ENABLE_5D_FEATURES and history_distribution_included:
+                    yield (x_od_i, y_od_i, unfinished_i, history_i, yesterday_i, xtime_i, ytime_i,
+                           repeated_sparse_5D_tensors_i)
+                elif history_distribution_included:
+                    yield (x_od_i, y_od_i, unfinished_i, history_i, yesterday_i, xtime_i, ytime_i)
+                else:
+                    yield (x_od_i, y_od_i, xtime_i, ytime_i)
                 self.current_ind += 1
         return _wrapper()
 
@@ -322,85 +318,71 @@ def load_dataset(dataset_dir,
                     **kwargs):
     data = {}
 
-
-
     for category in ['train', 'val', 'test']:
         cat_data = load_pickle(os.path.join(dataset_dir, category + '.pkl'))
-        history_data = load_pickle(os.path.join(dataset_dir, category + '_history_long.pkl'))
-        yesterday_data = load_pickle(os.path.join(dataset_dir, category + '_history_short.pkl'))
-        PINN_data_od = load_pickle(os.path.join(dataset_dir, category + '_OD_signal_dict_array.pkl'))
-        OD_feature_array = load_pickle(os.path.join(dataset_dir, category + '_repeated_OD_feature_array.pkl'))
-        Time_DepartFreDic_Array = load_pickle(os.path.join(dataset_dir, category + '_repeated_Time_DepartFre_Array.pkl'))
-        if ENABLE_2D_3D_4D_COMPRESSED_FEATURES:
-            repeated_sparse_2D_tensors = torch.load(
-                os.path.join(dataset_dir, category + '_repeated_sparse_2D_tensors.pt'))
-            repeated_sparse_3D_tensors = torch.load(
-                os.path.join(dataset_dir, category + '_repeated_sparse_3D_tensors.pt'))
-            repeated_sparse_4D_tensors = torch.load(
-                os.path.join(dataset_dir, category + '_repeated_sparse_4D_tensors.pt'))
-            """OD_path_compressed_array = load_pickle(
-                os.path.join(dataset_dir, category + '_OD_path_compressed_array.pkl'))"""
 
+        data['x_' + category] = cat_data['finished']
+        data['xtime_' + category] = cat_data['xtime']
+        data['y_' + category] = cat_data['y']
+        data['ytime_' + category] = cat_data['ytime']
+
+        scaler = StandardScaler(mean=data['x_train'].mean(axis=scaler_axis),
+                                std=data['x_train'].std(axis=scaler_axis))
+
+        data['x_' + category] = scaler.transform(data['x_' + category])
+        data['y_' + category] = scaler.transform(data['y_' + category])
+
+        if history_distribution_included:
+            data['unfinished_' + category] = cat_data['unfinished']
+
+            history_data = load_pickle(os.path.join(dataset_dir, category + '_history_long.pkl'))
+            his_sum = np.sum(history_data['history'], axis=-1)
+            history_distribution = np.nan_to_num(np.divide(history_data['history'], np.expand_dims(his_sum, axis=-1)))
+
+            yesterday_data = load_pickle(os.path.join(dataset_dir, category + '_history_short.pkl'))
+            yesterday_sum = np.sum(yesterday_data['history'], axis=-1)
+            yesterday_distribution = np.nan_to_num(
+                np.divide(yesterday_data['history'], np.expand_dims(yesterday_sum, axis=-1)))
+
+            data['history_' + category] = np.multiply(history_distribution, cat_data['unfinished'])
+            data['yesterday_' + category] = np.multiply(yesterday_distribution, cat_data['unfinished'])
+
+            data['unfinished_' + category] = scaler.transform(data['unfinished_' + category])
+            data['history_' + category] = scaler.transform(data['history_' + category])
+            data['yesterday_' + category] = scaler.transform(data['yesterday_' + category])
+
+        if four_step_method_included:
+            PINN_data_od = load_pickle(os.path.join(dataset_dir, category + '_signal_dict_array.pkl'))
+            OD_feature_array = load_pickle(os.path.join(dataset_dir, category + '_repeated_OD_feature_array.pkl'))
+            Time_DepartFreDic_Array = load_pickle(
+                os.path.join(dataset_dir, category + '_repeated_Time_DepartFre_Array.pkl'))
         if ENABLE_5D_FEATURES:
             repeated_sparse_5D_tensors = torch.load(
                 os.path.join(dataset_dir, category + '_repeated_sparse_5D_tensors.pt'))
 
-        data['x_' + category] = cat_data['finished']
-        data['unfinished_' + category] = cat_data['unfinished']
-        data['xtime_' + category] = cat_data['xtime']
-        data['y_' + category] = cat_data['y']
-        data['ytime_' + category] = cat_data['ytime']
-        data['PINN_od_features_' + category] = np.array(PINN_data_od["features"])
-        data['PINN_od_additional_features_' + category] = PINN_data_od["additional_feature"]
-        data['OD_feature_array_' + category] = OD_feature_array
-        data['Time_DepartFreDic_Array_' + category] = Time_DepartFreDic_Array
-        if ENABLE_2D_3D_4D_COMPRESSED_FEATURES:
-            data['repeated_sparse_2D_tensors_' + category] = repeated_sparse_2D_tensors
-            data['repeated_sparse_3D_tensors_' + category] = repeated_sparse_3D_tensors
-            data['repeated_sparse_4D_tensors_' + category] = repeated_sparse_4D_tensors
-            #data['OD_path_compressed_array_' + category] = OD_path_compressed_array
+        if four_step_method_included:
+            data['PINN_od_features_' + category] = np.array(PINN_data_od["features"])
+            data['PINN_od_additional_features_' + category] = PINN_data_od["additional_feature"]
+            data['OD_feature_array_' + category] = OD_feature_array
+            data['Time_DepartFreDic_Array_' + category] = Time_DepartFreDic_Array
         if ENABLE_5D_FEATURES:
             data['repeated_sparse_5D_tensors_' + category] = repeated_sparse_5D_tensors
-
-        his_sum = np.sum(history_data['history'], axis=-1)
-        history_distribution = np.nan_to_num(np.divide(history_data['history'], np.expand_dims(his_sum, axis=-1)))
-        data['history_' + category] = np.multiply(history_distribution, cat_data['unfinished'])
-
-        yesterday_sum = np.sum(yesterday_data['history'], axis=-1)
-        yesterday_distribution = np.nan_to_num(np.divide(yesterday_data['history'], np.expand_dims(yesterday_sum, axis=-1)))
-        data['yesterday_' + category] = np.multiply(yesterday_distribution, cat_data['unfinished'])
-
-    scaler = StandardScaler(mean=data['x_train'].mean(axis=scaler_axis),
-                            std=data['x_train'].std(axis=scaler_axis))
-    # Data format
-    for category in ['train', 'val', 'test']:
-        data['x_' + category] = scaler.transform(data['x_' + category])
-        data['y_' + category] = scaler.transform(data['y_' + category])
-        data['unfinished_' + category] = scaler.transform(data['unfinished_' + category])
-        data['history_' + category] = scaler.transform(data['history_' + category])
-        data['yesterday_' + category] = scaler.transform(data['yesterday_' + category])
 
     def create_dataloader(phase, data, batch_size, shuffle):
         return DataLoader(
             x_od=data[f'x_{phase}'],
             y_od=data[f'y_{phase}'],
-            unfinished=data[f'unfinished_{phase}'],
-            history=data[f'history_{phase}'],
-            yesterday=data[f'yesterday_{phase}'],
             xtime=data[f'xtime_{phase}'],
             ytime=data[f'ytime_{phase}'],
-            PINN_od_features=data[f'PINN_od_features_{phase}'],
-            PINN_od_additional_features=data[f'PINN_od_additional_features_{phase}'],
-            OD_feature_array=data[f'OD_feature_array_{phase}'],
-            Time_DepartFreDic_Array=data[f'Time_DepartFreDic_Array_{phase}'],
-            repeated_sparse_2D_tensors=data.get(f'repeated_sparse_2D_tensors_{phase}',
-                                                None) if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-            repeated_sparse_3D_tensors=data.get(f'repeated_sparse_3D_tensors_{phase}',
-                                                None) if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-            repeated_sparse_4D_tensors=data.get(f'repeated_sparse_4D_tensors_{phase}',
-                                                None) if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-            #OD_path_compressed_array=data.get(f'OD_path_compressed_array_{phase}',
-                                              #None) if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
+            unfinished=data.get(f'unfinished_{phase}', None) if history_distribution_included else None,
+            history=data.get(f'history_{phase}', None) if history_distribution_included else None,
+            yesterday=data.get(f'yesterday_{phase}', None) if history_distribution_included else None,
+            PINN_od_features=data.get(f'PINN_od_features_{phase}', None) if four_step_method_included else None,
+            PINN_od_additional_features=data.get(f'PINN_od_additional_features_{phase}',
+                                                None) if four_step_method_included else None,
+            OD_feature_array=data.get(f'OD_feature_array_{phase}', None) if four_step_method_included else None,
+            Time_DepartFreDic_Array=data.get(f'Time_DepartFreDic_Array_{phase}',
+                                      None) if four_step_method_included else None,
             repeated_sparse_5D_tensors=data.get(f'repeated_sparse_5D_tensors_{phase}',
                                                 None) if ENABLE_5D_FEATURES else None,
             batch_size=batch_size,
@@ -439,14 +421,15 @@ class SimpleBatch(list):
             ele.to(device)
         return self
 
-def collate_wrapper(x_od, y_od, unfinished, history, yesterday, PINN_od_features,
-                    PINN_od_additional_features, OD_feature_array,
-                    Time_DepartFreDic_Array,
+def collate_wrapper(x_od, y_od,
                     edge_index, edge_attr, seq_len, horizon, device,
-                    #OD_path_compressed_array=None,
-                    repeated_sparse_2D_tensors=None,
-                    repeated_sparse_3D_tensors=None,
-                    repeated_sparse_4D_tensors=None,
+                    unfinished=None,
+                    history=None,
+                    yesterday=None,
+                    PINN_od_features=None,
+                    PINN_od_additional_features=None,
+                    OD_feature_array=None,
+                    Time_DepartFreDic_Array=None,
                     repeated_sparse_5D_tensors=None,
                     return_y=True):
     x_od = torch.tensor(x_od, dtype=torch.float, device=device)
@@ -454,35 +437,26 @@ def collate_wrapper(x_od, y_od, unfinished, history, yesterday, PINN_od_features
     x_od = x_od.transpose(dim0=1, dim1=0)  # (T, N, num_nodes, num_features)
     y_od_T_first = y_od.transpose(dim0=1, dim1=0)
 
-    unfinished = torch.tensor(unfinished, dtype=torch.float, device=device)
-    unfinished = unfinished.transpose(dim0=1, dim1=0)
+    if history_distribution_included:
+        unfinished = torch.tensor(unfinished, dtype=torch.float, device=device)
+        unfinished = unfinished.transpose(dim0=1, dim1=0)
+        history = torch.tensor(history, dtype=torch.float, device=device)
+        history = history.transpose(dim0=1, dim1=0)
+        yesterday = torch.tensor(yesterday, dtype=torch.float, device=device)
+        yesterday = yesterday.transpose(dim0=1, dim1=0)
 
-    history = torch.tensor(history, dtype=torch.float, device=device)
-    history = history.transpose(dim0=1, dim1=0)
-
-    yesterday = torch.tensor(yesterday, dtype=torch.float, device=device)
-    yesterday = yesterday.transpose(dim0=1, dim1=0)
-
-    if ENABLE_2D_3D_4D_COMPRESSED_FEATURES:
-        transposed_repeated_sparse_2D_tensors = list(map(list, zip(*repeated_sparse_2D_tensors)))
-        transposed_repeated_sparse_3D_tensors = list(map(list, zip(*repeated_sparse_3D_tensors)))
-        transposed_repeated_sparse_4D_tensors = list(map(list, zip(*repeated_sparse_4D_tensors)))
-        #OD_path_compressed_array = torch.tensor(OD_path_compressed_array, dtype=torch.float, device=device)
-        #OD_path_compressed_array_T_first = OD_path_compressed_array.transpose(dim0=1, dim1=0)
+    if four_step_method_included:
+        PINN_od_features = torch.tensor(PINN_od_features, dtype=torch.float, device=device)
+        PINN_od_additional_features = torch.tensor(PINN_od_additional_features, dtype=torch.float, device=device)
+        PINN_od_features_T_first = PINN_od_features.transpose(dim0=1, dim1=0)  # (T, N, num_nodes, num_features)
+        PINN_od_additional_features_T_first = PINN_od_additional_features.transpose(dim0=1, dim1=0)
+        OD_feature_array = torch.tensor(OD_feature_array, dtype=torch.float, device=device)
+        OD_feature_array_T_first = OD_feature_array.transpose(dim0=1, dim1=0)
+        Time_DepartFreDic_Array = torch.tensor(Time_DepartFreDic_Array, dtype=torch.float, device=device)
+        Time_DepartFreDic_Array_T_first = Time_DepartFreDic_Array.transpose(dim0=1, dim1=0)
 
     if ENABLE_5D_FEATURES and repeated_sparse_5D_tensors is not None:
         transposed_repeated_sparse_5D_tensors = list(map(list, zip(*repeated_sparse_5D_tensors)))
-
-    PINN_od_features = torch.tensor(PINN_od_features, dtype=torch.float, device=device)
-    PINN_od_additional_features = torch.tensor(PINN_od_additional_features, dtype=torch.float, device=device)
-    PINN_od_features_T_first = PINN_od_features.transpose(dim0=1, dim1=0) # (T, N, num_nodes, num_features)
-    PINN_od_additional_features_T_first = PINN_od_additional_features.transpose(dim0=1, dim1=0) # (T, N, num_nodes, num_features)
-
-    OD_feature_array = torch.tensor(OD_feature_array, dtype=torch.float, device=device)
-    OD_feature_array_T_first = OD_feature_array.transpose(dim0=1, dim1=0)
-
-    Time_DepartFreDic_Array = torch.tensor(Time_DepartFreDic_Array, dtype=torch.float, device=device)
-    Time_DepartFreDic_Array_T_first = Time_DepartFreDic_Array.transpose(dim0=1, dim1=0)
 
     #edge_index = torch.tensor(edge_index, device=device)
     #edge_attr = torch.tensor(edge_attr, device=device)
@@ -509,33 +483,28 @@ def collate_wrapper(x_od, y_od, unfinished, history, yesterday, PINN_od_features
     sequences_y = []
     for t in range(T - seq_len, T):
         cur_batch_x_od = x_od[t]
-        cur_batch_unfinished = unfinished[t]
-        cur_batch_history = history[t]
-        cur_batch_yesterday = yesterday[t]
-        cur_batch_PINN_od_features = PINN_od_features_T_first[t]
-        cur_batch_PINN_od_additional_features = PINN_od_additional_features_T_first[t]
-        cur_batch_OD_feature_array = OD_feature_array_T_first[t]
-        cur_batch_Time_DepartFreDic_Array = Time_DepartFreDic_Array_T_first[t]
-        if ENABLE_2D_3D_4D_COMPRESSED_FEATURES:
-            cur_repeated_sparse_2D_tensors = transposed_repeated_sparse_2D_tensors[t]
-            cur_repeated_sparse_3D_tensors = transposed_repeated_sparse_3D_tensors[t]
-            cur_repeated_sparse_4D_tensors = transposed_repeated_sparse_4D_tensors[t]
-            #cur_batch_OD_path_compressed_array = OD_path_compressed_array_T_first[t]
+
+        if history_distribution_included:
+            cur_batch_unfinished = unfinished[t]
+            cur_batch_history = history[t]
+            cur_batch_yesterday = yesterday[t]
+        if four_step_method_included:
+            cur_batch_PINN_od_features = PINN_od_features_T_first[t]
+            cur_batch_PINN_od_additional_features = PINN_od_additional_features_T_first[t]
+            cur_batch_OD_feature_array = OD_feature_array_T_first[t]
+            cur_batch_Time_DepartFreDic_Array = Time_DepartFreDic_Array_T_first[t]
         if ENABLE_5D_FEATURES and repeated_sparse_5D_tensors is not None:
             cur_repeated_sparse_5D_tensors = transposed_repeated_sparse_5D_tensors[t]
 
         batch = Batch.from_data_list([
             Data(x_od=cur_batch_x_od[i],
-                 unfinished=cur_batch_unfinished[i],
-                 history=cur_batch_history[i],
-                 yesterday=cur_batch_yesterday[i],
-                 PINN_od_features=cur_batch_PINN_od_features[i],
-                 PINN_od_additional_features=cur_batch_PINN_od_additional_features[i],
-                 OD_feature_array=cur_batch_OD_feature_array[i],
-                 Time_DepartFreDic_Array=cur_batch_Time_DepartFreDic_Array[i],
-                 repeated_sparse_2D_tensors=cur_repeated_sparse_2D_tensors[i] if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-                 repeated_sparse_3D_tensors=cur_repeated_sparse_3D_tensors[i] if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-                 repeated_sparse_4D_tensors=cur_repeated_sparse_4D_tensors[i] if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
+                 unfinished=cur_batch_unfinished[i] if history_distribution_included else None,
+                 history=cur_batch_history[i] if history_distribution_included else None,
+                 yesterday=cur_batch_yesterday[i] if history_distribution_included else None,
+                 PINN_od_features=cur_batch_PINN_od_features[i] if four_step_method_included else None,
+                 PINN_od_additional_features=cur_batch_PINN_od_additional_features[i] if four_step_method_included else None,
+                 OD_feature_array=cur_batch_OD_feature_array[i] if four_step_method_included else None,
+                 Time_DepartFreDic_Array=cur_batch_Time_DepartFreDic_Array[i] if four_step_method_included else None,
                  repeated_sparse_5D_tensors=cur_repeated_sparse_5D_tensors[i] if ENABLE_5D_FEATURES else None,
                  edge_index=edge_index,
                  edge_attr=edge_attr) for i in range(N)

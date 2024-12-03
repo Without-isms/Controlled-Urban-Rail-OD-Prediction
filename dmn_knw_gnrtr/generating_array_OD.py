@@ -18,10 +18,10 @@ import os
 import numpy as np
 import pickle
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
-
-def generate_OD_DO_array(df, x_y_time, sz_conn_to_station_index, station_index_to_sz_conn, 
-                         base_dir, prefix, od_or_do, station_manager_dict_name):
+def generate_OD_DO_array(df, x_y_time, sz_conn_to_station_index, station_index_to_sz_conn,
+                         base_dir, prefix, station_manager_dict_name):
     """
     Generate OD or DO arrays.
     :param df: DataFrame
@@ -30,14 +30,12 @@ def generate_OD_DO_array(df, x_y_time, sz_conn_to_station_index, station_index_t
     :param station_index_to_sz_conn: Dictionary mapping station index to station
     :param base_dir: Base directory
     :param prefix: File prefix
-    :param od_or_do: 'od' for generating OD matrix, 'do' for generating DO matrix
     :return: Generated dictionary
     """
 
-    output_dir = os.path.join(base_dir, od_or_do.upper())
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(base_dir, exist_ok=True)
     station_manager_dict_file_path = f"data{os.path.sep}suzhou{os.path.sep}{station_manager_dict_name}"
-    result_array_file_path = os.path.join(output_dir, f'{prefix}_result_array_{od_or_do.upper()}.pkl')
+    result_array_file_path = os.path.join(base_dir, f'{prefix}_result_array.pkl')
 
     with open(station_manager_dict_file_path, 'rb') as f:
         station_manager_dict = pickle.load(f)
@@ -45,47 +43,52 @@ def generate_OD_DO_array(df, x_y_time, sz_conn_to_station_index, station_index_t
     T_N_D_ODs = {}
     Trip_Production_In_Station_or_Out_Station = {}
     Trip_Attraction_In_Station_or_Out_Station = {}
-
-    for time in tqdm(x_y_time, desc=f"Processing Time Stamps for {od_or_do.upper()}"):
-
-        df_time = df[df['in_count_time'] == time]
-
+    df_time_dict = {time: df[df['in_count_time'] == time] for time in x_y_time}
+    def process_OD_array_of_each_timestamp(time):
+        df_time = df_time_dict[time]
         N = len(sz_conn_to_station_index)
         od_matrix = np.zeros((N, N))
         trip_Production_matrix = np.zeros((N, 1))
         trip_attraction_matrix = np.zeros((N, 1))
 
+        """df_start_or_end_dict = defaultdict(list)
+        df_terminal_dict = defaultdict(list)
+
+        for start_or_end_station in sz_conn_to_station_index:
+            df_start_or_end_dict[start_or_end_station] = df_time[df_time['in_station_id'] == start_or_end_station]
+            df_terminal_dict[start_or_end_station] = df_time[df_time['out_station_id'] == start_or_end_station]"""
+
         for i, start_or_end_station_list in sz_conn_to_station_index.items():
             if start_or_end_station_list[0] == 0:
-                print("there is no station named" + str(station_index_to_sz_conn[start_or_end_station_list[0]]))
-                combined_string = ''.join(station_manager_dict['index_station'][element] for element in station_index_to_sz_conn[start_or_end_station_list[0]])
-                print("there is no station named" + combined_string)
+                combined_string = ' '.join(station_manager_dict['index_station'][element] for element in
+                                          station_index_to_sz_conn[start_or_end_station_list[0]])
+                print("there is no station named" + str(station_index_to_sz_conn[start_or_end_station_list[0]])+","+ combined_string)
                 continue
 
             same_start_station_dif_index_dest_counts = pd.Series()
             same_start_station_dif_index_dest_counts_all = 0
             same_end_station_dif_index_start_counts_all = 0
             for start_or_end_station in start_or_end_station_list:
-                if od_or_do == "od":
-                    df_start_or_end = df_time[df_time['in_station_id'] == start_or_end_station]
-                    dest_counts = df_start_or_end.groupby('out_station_id')['count_od'].sum()
-                    dest_counts_all = df_start_or_end['count_od'].sum()
-                    df_terminal = df_time[df_time['out_station_id'] == start_or_end_station]
-                    orig_counts = df_terminal.groupby('in_station_id')['count_od'].sum()
-                    orig_counts_all = df_start_or_end['count_od'].sum()
-                else:
+                """if od_or_do == "od":"""
+                df_start_or_end = df_time[df_time['in_station_id'] == start_or_end_station]
+                dest_counts = df_start_or_end.groupby('out_station_id')['count_od'].sum()
+                dest_counts_all = df_start_or_end['count_od'].sum()
+                df_terminal = df_time[df_time['out_station_id'] == start_or_end_station]
+                orig_counts = df_terminal.groupby('in_station_id')['count_od'].sum()
+                orig_counts_all = df_start_or_end['count_od'].sum()
+                """else:
                     df_start_or_end = df_time[df_time['out_station_id'] == start_or_end_station]
                     dest_counts = df_start_or_end.groupby('in_station_id')['count_od'].sum()
                     dest_counts_all = df_start_or_end['count_od'].sum()
                     df_terminal = df_time[df_time['in_station_id'] == start_or_end_station]
                     orig_counts = df_start_or_end.groupby('out_station_id')['count_od'].sum()
-                    orig_counts_all = df_start_or_end['count_od'].sum()
-
+                    orig_counts_all = df_start_or_end['count_od'].sum()"""
                 if dest_counts.sum() == 0:
                     continue
 
                 idx = same_start_station_dif_index_dest_counts.index.union(dest_counts.index)
-                same_start_station_dif_index_dest_counts = same_start_station_dif_index_dest_counts.reindex(idx).fillna(0)
+                same_start_station_dif_index_dest_counts = same_start_station_dif_index_dest_counts.reindex(idx).fillna(
+                    0)
                 dest_counts = dest_counts.reindex(idx).fillna(0)
                 same_start_station_dif_index_dest_counts += dest_counts
                 same_start_station_dif_index_dest_counts_all += dest_counts_all
@@ -98,12 +101,19 @@ def generate_OD_DO_array(df, x_y_time, sz_conn_to_station_index, station_index_t
             trip_Production_matrix[i] = same_start_station_dif_index_dest_counts_all
             trip_attraction_matrix[i] = same_end_station_dif_index_start_counts_all
 
+        return time, od_matrix, trip_Production_matrix, trip_attraction_matrix
+
+    with ThreadPoolExecutor() as executor:
+        results = list(tqdm(executor.map(process_OD_array_of_each_timestamp, x_y_time), total=len(x_y_time)))
+
+    for time, od_matrix, trip_Production_matrix, trip_attraction_matrix in results:
         T_N_D_ODs[time] = od_matrix
         Trip_Production_In_Station_or_Out_Station[time] = trip_Production_matrix
         Trip_Attraction_In_Station_or_Out_Station[time] = trip_attraction_matrix
+
     intermediate_dic = {
         'T_N_D_ODs': T_N_D_ODs,
-        'Trip_Production_In_Station_or_Out_Station':Trip_Production_In_Station_or_Out_Station,
+        'Trip_Production_In_Station_or_Out_Station': Trip_Production_In_Station_or_Out_Station,
         'Trip_Attraction_In_Station_or_Out_Station': Trip_Attraction_In_Station_or_Out_Station
     }
     # In fact, only T_N_D_ODs is needed here, but it's included for faster execution.
@@ -136,18 +146,14 @@ def generate_T_N_D_ODs(result_array_all, D):
 
     return result_array
 
-def process_data(D, base_dir, prefix, od_type, str_prdc_attr, seq_len):
-    dir_path = os.path.join(base_dir, od_type.upper())
-    os.makedirs(dir_path, exist_ok=True)
-    result_array_file_path = os.path.join(dir_path, f'{prefix}_result_array_{od_type.upper()}.pkl')
-    signal_dict_file_path = f'{prefix}_{od_type.upper()}_{str_prdc_attr}_signal_dict.pkl'
-    signal_dict_array_file_path = os.path.join(dir_path, f'{prefix}_{od_type.upper()}_signal_dict_array.pkl')
-    train_history_short_filename = os.path.join(dir_path, f'{prefix}_history_short.pkl')
-    train_history_long_filename = os.path.join(dir_path, f'{prefix}_history_long.pkl')
-    if od_type=="od":
-        train_dict_file_path = os.path.join(dir_path, f'{prefix}.pkl')
-    else:
-        train_dict_file_path = os.path.join(dir_path, f'{prefix}_do.pkl')
+def process_data(D, base_dir, prefix, str_prdc_attr, seq_len):
+    os.makedirs(base_dir, exist_ok=True)
+    result_array_file_path = os.path.join(base_dir, f'{prefix}_result_array.pkl')
+    signal_dict_file_path = f'{prefix}_{str_prdc_attr}_signal_dict.pkl'
+    signal_dict_array_file_path = os.path.join(base_dir, f'{prefix}_signal_dict_array.pkl')
+    train_history_short_filename = os.path.join(base_dir, f'{prefix}_history_short.pkl')
+    train_history_long_filename = os.path.join(base_dir, f'{prefix}_history_long.pkl')
+    train_dict_file_path = os.path.join(base_dir, f'{prefix}.pkl')
 
     with open(result_array_file_path, 'rb') as f:
         intermediate_dic = pickle.load(f, errors='ignore')
@@ -156,7 +162,7 @@ def process_data(D, base_dir, prefix, od_type, str_prdc_attr, seq_len):
         result_array_all = np.array([T_N_D_ODs[time] for time in sorted_times])
         result_array = generate_T_N_D_ODs(result_array_all, D)
 
-        with open(os.path.join(dir_path, signal_dict_file_path), 'rb') as f:
+        with open(os.path.join(base_dir, signal_dict_file_path), 'rb') as f:
             signal_dict = pickle.load(f, errors='ignore')
             features = signal_dict["features"]
             additional_feature = signal_dict["additional_feature"]
@@ -167,38 +173,32 @@ def process_data(D, base_dir, prefix, od_type, str_prdc_attr, seq_len):
     unfinished = []
     xtime = []
     features_ = []
-    additional_feature_ =[]
-    for i in range(seq_len, T):
-        temp_array = np.array([result_array[i - j] for j in range(seq_len)])
-        features_temp_array = np.array([features[i - j] for j in range(seq_len)])
-        additional_feature_temp_array = np.array([additional_feature[i - j] for j in range(seq_len)])
+    additional_feature_ = []
+    y = []
+    ytime = []
+    for i in range(0, T - seq_len - seq_len + 1):
+        temp_array = np.array([result_array[i + j] for j in range(seq_len)])
+        unfinished_temp_array = np.array([result_array[i + j].sum(axis=1, keepdims=True) for j in range(seq_len)])
+        features_temp_array = np.array([features[i + j] for j in range(seq_len)])
+        additional_feature_temp_array = np.array([additional_feature[i + j] for j in range(seq_len)])
         finished.append(temp_array)
         features_.append(features_temp_array)
         additional_feature_.append(additional_feature_temp_array)
-
-        unfinished_temp_array_list = []
-
-        """
-        for j in range(seq_len):
-            current_array = result_array[i - j]
-            print(f"result_array[{i - j}] shape: {current_array.shape}")
-
-            summed_array = current_array.sum(axis=1, keepdims=True)
-            print(f"summed_array shape: {summed_array.shape}")
-
-            unfinished_temp_array_list.append(summed_array)
-
-        unfinished_temp_array = np.array(unfinished_temp_array_list)
-        """
-        unfinished_temp_array = np.array([result_array[i - j].sum(axis=1, keepdims=True) for j in range(seq_len)])
         unfinished.append(unfinished_temp_array)
         xtime.append(sorted_times[i])
 
-    finished_array = np.array(finished[:-1])
-    unfinished_array = np.array(unfinished[:-1])
-    xtime = np.array(xtime[:-1])
-    features_ = np.array(features_[:-1])
-    additional_feature_ = np.array(additional_feature_[:-1])
+        temp_array_y = np.array([result_array[i + seq_len + j] for j in range(seq_len)])
+        y.append(temp_array_y)
+        ytime.append(sorted_times[i + seq_len])
+
+    finished_array = np.array(finished)
+    unfinished_array = np.array(unfinished)
+    xtime = np.array(xtime)
+    features_ = np.array(features_)
+    additional_feature_ = np.array(additional_feature_)
+
+    y_array = np.array(y)
+    ytime = np.array(ytime)
 
     signal_dict_array = {
         'features': features_,
@@ -207,16 +207,6 @@ def process_data(D, base_dir, prefix, od_type, str_prdc_attr, seq_len):
 
     with open(signal_dict_array_file_path, 'wb') as f:
         pickle.dump(signal_dict_array, f)
-
-    y = []
-    ytime = []
-    for i in range(1, T - seq_len):
-        temp_array = np.array([result_array[i + j] for j in range(seq_len)])
-        y.append(temp_array)
-        ytime.append(sorted_times[i + seq_len])
-
-    y_array = np.array(y)
-    ytime = np.array(ytime)
 
     train_dict = {
         'finished': finished_array,
@@ -233,39 +223,38 @@ def process_data(D, base_dir, prefix, od_type, str_prdc_attr, seq_len):
     print_array_info(ytime)
     save_to_pickle(train_dict, train_dict_file_path)
 
-    if od_type == "od":
-        xtime = np.array([np.datetime64(ts) for ts in xtime])
-        one_week_ns = np.timedelta64(1, 'W')
-        one_day_ns = np.timedelta64(1, 'D')
+    xtime = np.array([np.datetime64(ts) for ts in xtime])
+    one_week_ns = np.timedelta64(1, 'W')
+    one_day_ns = np.timedelta64(1, 'D')
 
-        train_history_short = np.zeros_like(finished_array)
-        train_history_long = np.zeros_like(finished_array)
+    train_history_short = np.zeros_like(finished_array)
+    train_history_long = np.zeros_like(finished_array)
 
-        for i, current_time in enumerate(xtime):
-            target_time_week = current_time - one_week_ns
-            target_time_day = current_time - one_day_ns
+    for i, current_time in enumerate(xtime):
+        target_time_week = current_time - one_week_ns
+        target_time_day = current_time - one_day_ns
 
-            closest_index_week = np.abs(xtime - target_time_week).argmin()
-            if xtime[closest_index_week] > current_time:
-                while closest_index_week > 0 and xtime[closest_index_week] > current_time:
-                    closest_index_week -= 1
+        closest_index_week = np.abs(xtime - target_time_week).argmin()
+        if xtime[closest_index_week] > current_time:
+            while closest_index_week > 0 and xtime[closest_index_week] > current_time:
+                closest_index_week -= 1
 
-            closest_index_day = np.abs(xtime - target_time_day).argmin()
-            if xtime[closest_index_day] > current_time:
-                while closest_index_day > 0 and xtime[closest_index_day] > current_time:
-                    closest_index_day -= 1
+        closest_index_day = np.abs(xtime - target_time_day).argmin()
+        if xtime[closest_index_day] > current_time:
+            while closest_index_day > 0 and xtime[closest_index_day] > current_time:
+                closest_index_day -= 1
 
-            train_history_short[i] = finished_array[closest_index_week]
-            train_history_long[i] = finished_array[closest_index_day]
+        train_history_short[i] = finished_array[closest_index_week]
+        train_history_long[i] = finished_array[closest_index_day]
 
-        train_history_short_dict = {'history': train_history_short}
+    train_history_short_dict = {'history': train_history_short}
 
-        print_array_info(train_history_short)
-        save_to_pickle(train_history_short_dict, train_history_short_filename)
+    print_array_info(train_history_short)
+    save_to_pickle(train_history_short_dict, train_history_short_filename)
 
-        train_history_long_dict = {'history': train_history_long}
-        print_array_info(train_history_long)
-        save_to_pickle(train_history_long_dict, train_history_long_filename)
+    train_history_long_dict = {'history': train_history_long}
+    print_array_info(train_history_long)
+    save_to_pickle(train_history_long_dict, train_history_long_filename)
 
 def Connect_to_SQL(prefix, train_sql, test_sql, val_sql, station_manager_dict_name,
                    host, user, password, database):

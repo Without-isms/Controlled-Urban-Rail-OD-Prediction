@@ -27,7 +27,7 @@ parser.add_argument('--config_filename',
                     default=None,
                     type=str,
                     help='Configuration filename for restoring the model.')
-args = argparse.Namespace(config_filename='data/config/eval_sz_dim26_units96_h4c512.yaml')
+args = argparse.Namespace(config_filename='data/config/eval_sz_dim26_units96_h4c512.yaml') #这一句载入了配置文件，配置文件中包含了模型的参数，用处是为了加载模型
 
 
 def read_cfg_file(filename):
@@ -36,7 +36,7 @@ def read_cfg_file(filename):
     return cfg
 
 def run_model(model, data_iterator, edge_index, edge_attr, device, seq_len, horizon, output_dim,
-              ENABLE_2D_3D_4D_COMPRESSED_FEATURES, ENABLE_5D_FEATURES):
+              four_step_method_included, history_distribution_included, ENABLE_5D_FEATURES):
     """
     return a list of (horizon_i, batch_size, num_nodes, output_dim)
     """
@@ -44,38 +44,34 @@ def run_model(model, data_iterator, edge_index, edge_attr, device, seq_len, hori
     model.eval()
     y_od_pred_list = []
     for _, batch in enumerate(data_iterator):
-        if ENABLE_2D_3D_4D_COMPRESSED_FEATURES and ENABLE_5D_FEATURES:
+        if four_step_method_included and ENABLE_5D_FEATURES and history_distribution_included:
             (x_od, y_od, unfinished, history, yesterday, xtime, ytime, PINN_od_features,
              PINN_od_additional_features, OD_feature_array,
              Time_DepartFreDic_Array,
-             # OD_path_compressed_array,
-             repeated_sparse_2D_tensors, repeated_sparse_3D_tensors, repeated_sparse_4D_tensors,
              repeated_sparse_5D_tensors) = batch
-        elif ENABLE_2D_3D_4D_COMPRESSED_FEATURES:
-            (x_od, y_od, unfinished, history, yesterday, xtime, ytime, PINN_od_features,
-             PINN_od_additional_features, OD_feature_array,
-             Time_DepartFreDic_Array,
-             # OD_path_compressed_array,
-             repeated_sparse_2D_tensors, repeated_sparse_3D_tensors, repeated_sparse_4D_tensors) = batch
-        elif ENABLE_5D_FEATURES:
-            (x_od, y_od, unfinished, history, yesterday, xtime, ytime, PINN_od_features,
-             PINN_od_additional_features, OD_feature_array,
-             Time_DepartFreDic_Array, repeated_sparse_5D_tensors) = batch
-        else:
+        elif four_step_method_included and history_distribution_included:
             (x_od, y_od, unfinished, history, yesterday, xtime, ytime, PINN_od_features,
              PINN_od_additional_features, OD_feature_array,
              Time_DepartFreDic_Array) = batch
+        elif ENABLE_5D_FEATURES and history_distribution_included:
+            (x_od, y_od, unfinished, history, yesterday, xtime, ytime,
+             repeated_sparse_5D_tensors) = batch
+        elif history_distribution_included:
+            (x_od, y_od, unfinished, history, yesterday, xtime, ytime) = batch
+        else:
+            (x_od, y_od, xtime, ytime) = batch
+
         y_od = y_od[..., :output_dim]
         sequences, sequences_y, y_od = collate_wrapper(
-            x_od=x_od, y_od=y_od, unfinished=unfinished, history=history,
-            yesterday=yesterday, PINN_od_features=PINN_od_features,
-            PINN_od_additional_features=PINN_od_additional_features, OD_feature_array=OD_feature_array,
-            Time_DepartFreDic_Array=Time_DepartFreDic_Array,
+            x_od=x_od, y_od=y_od,
             edge_index=edge_index, edge_attr=edge_attr, device=device, seq_len=seq_len, horizon=horizon,
-            #OD_path_compressed_array=OD_path_compressed_array if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-            repeated_sparse_2D_tensors=repeated_sparse_2D_tensors if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-            repeated_sparse_3D_tensors=repeated_sparse_3D_tensors if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-            repeated_sparse_4D_tensors=repeated_sparse_4D_tensors if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
+            unfinished=unfinished if history_distribution_included else None,
+            history=history if history_distribution_included else None,
+            yesterday=yesterday if history_distribution_included else None,
+            PINN_od_features=PINN_od_features if four_step_method_included else None,
+            PINN_od_additional_features=PINN_od_additional_features if four_step_method_included else None,
+            OD_feature_array=OD_feature_array if four_step_method_included else None,
+            Time_DepartFreDic_Array=Time_DepartFreDic_Array if four_step_method_included else None,
             repeated_sparse_5D_tensors=repeated_sparse_5D_tensors if ENABLE_5D_FEATURES else None
         )
         # (T, N, num_nodes, num_out_channels)
@@ -95,7 +91,8 @@ def evaluate(model,
                 seq_Len,
                 horizon,
                 output_dim,
-                ENABLE_2D_3D_4D_COMPRESSED_FEATURES,
+                four_step_method_included,
+                history_distribution_included,
                 ENABLE_5D_FEATURES,
                 logger,
                 detail=True,
@@ -113,9 +110,9 @@ def evaluate(model,
         seq_len=seq_Len,
         horizon=horizon,
         output_dim=output_dim,
-        ENABLE_2D_3D_4D_COMPRESSED_FEATURES=ENABLE_2D_3D_4D_COMPRESSED_FEATURES,
-        ENABLE_5D_FEATURES = ENABLE_5D_FEATURES
-    )
+        four_step_method_included=four_step_method_included,
+        history_distribution_included=history_distribution_included,
+        ENABLE_5D_FEATURES=ENABLE_5D_FEATURES)
 
     evaluate_category = []
     if len(y_od_preds) > 0:
@@ -235,21 +232,27 @@ def toDevice(datalist, device):
     return datalist
 
 def main(args):
+    # 加载配置文件
     cfg = read_cfg_file(args.config_filename)
+
+    # 初始化日志
     log_dir = _get_log_dir(cfg)
     log_level = cfg.get('log_level', 'INFO')
-
     logger = utils.get_logger(log_dir, __name__, 'info.log', level=log_level)
 
+    # 选择设备
     device = torch.device(
         'cuda') if torch.cuda.is_available() else torch.device('cpu')
     #  all edge_index in same dataset is same
     # edge_index = adjacency_to_edge_index(adj_mx)  # alreay added self-loop
+
+    # 加载模型
     logger.info(cfg)
-    batch_size = cfg['data']['batch_size']
+    batch_size = cfg['data']['batch_size'] #
     seq_len = cfg['model']['seq_len']
     horizon = cfg['model']['horizon']
-    ENABLE_2D_3D_4D_COMPRESSED_FEATURES = cfg['domain_knowledge']['ENABLE_2D_3D_4D_COMPRESSED_FEATURES']
+    four_step_method_included = cfg['domain_knowledge_loaded']['four_step_method']
+    history_distribution_included = cfg['domain_knowledge_loaded']['history_distribution']
     ENABLE_5D_FEATURES = cfg['domain_knowledge']['ENABLE_5D_FEATURES']
     Using_GAT_or_RGCN = cfg['domain_knowledge']['Using_GAT_or_RGCN']
     # edge_index = utils.load_pickle(cfg['data']['edge_index_pkl_filename'])
@@ -301,7 +304,8 @@ def main(args):
              seq_Len=seq_len,
              horizon=horizon,
              output_dim=output_dim,
-             ENABLE_2D_3D_4D_COMPRESSED_FEATURES=ENABLE_2D_3D_4D_COMPRESSED_FEATURES,
+             four_step_method_included=four_step_method_included,
+             history_distribution_included=history_distribution_included,
              ENABLE_5D_FEATURES=ENABLE_5D_FEATURES,
              logger=logger,
              cfg=cfg)

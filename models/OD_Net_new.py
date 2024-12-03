@@ -20,14 +20,32 @@ class ODNet_new(torch.nn.Module):
         super(ODNet_new, self).__init__()
         self.logger = logger
         self.cfg = cfg
+
+        self.trip_distribution_included = cfg['domain_knowledge_types_included']['trip_distribution']
+        self.depart_freq_included = cfg['domain_knowledge_types_included']['depart_freq']
+        self.traffic_assignment_included = cfg['domain_knowledge_types_included']['traffic_assignment']
+
         self.additional_section_feature_dim = cfg['model']['additional_section_feature_dim']
         self.additional_frequency_feature_dim = cfg['model']['additional_frequency_feature_dim']
+        self.additional_distribution_dim = cfg['model']['additional_distribution_dim']
+
         self.num_nodes = cfg['model']['num_nodes']
         self.num_output_dim = cfg['model']['output_dim']
         self.num_units = cfg['model']['rnn_units']
-        self.num_finished_input_dim = cfg['model']['input_dim'] + self.additional_section_feature_dim + self.additional_frequency_feature_dim
+
+        self.num_finished_input_dim = cfg['model']['input_dim']
+        self.num_unfinished_input_dim = cfg['model']['input_dim']
+        if self.trip_distribution_included:
+            self.num_finished_input_dim += self.additional_distribution_dim
+            self.num_unfinished_input_dim += self.additional_distribution_dim
+        if self.depart_freq_included:
+            self.num_finished_input_dim += self.additional_frequency_feature_dim
+            self.num_unfinished_input_dim += self.additional_frequency_feature_dim
+        if self.traffic_assignment_included:
+            self.num_finished_input_dim += self.additional_section_feature_dim
+            self.num_unfinished_input_dim += self.additional_section_feature_dim
+
         self.num_decoder_input_dim = cfg['model']['input_dim']
-        self.num_unfinished_input_dim = cfg['model']['input_dim'] + self.additional_section_feature_dim + self.additional_frequency_feature_dim
         self.num_rnn_layers = cfg['model']['num_rnn_layers']
         self.seq_len = cfg['model']['seq_len']
         self.horizon = cfg['model']['horizon']

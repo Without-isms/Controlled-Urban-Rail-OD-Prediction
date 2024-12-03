@@ -236,9 +236,9 @@ Dynamic_network_capacity_oriented_short_term_prediction/
 分级显示的目录结构:
 Dynamic_network_capacity_oriented_short_term_prediction/
 Dynamic_network_capacity_oriented_short_term_prediction/
-    [1] generating_domain_knowledge_no_DO.py
-    [2] train_button.py
-    [3] evaluate_att.py
+    [1] generating_domain_knowledge_no_DO.py #首先生成领域知识（OD路径访问概率） 独立参数执行一次
+    [2] train_button.py #训练模型 独立参数执行一次（是吗？）
+    [3] evaluate_att.py #评估模型 独立参数执行一次
     α. README.md
     β. directory_description.txt
 1. models/

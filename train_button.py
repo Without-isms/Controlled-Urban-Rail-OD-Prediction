@@ -44,7 +44,8 @@ parser.add_argument('--config_filename',
                     type=str,
                     help='Configuration filename for restoring the model.')
 #args = parser.parse_args()
-args = argparse.Namespace(config_filename=f'data{os.path.sep}config{os.path.sep}train_sz_dim26_units96_h4c512.yaml')
+# args = argparse.Namespace(config_filename=f'data{os.path.sep}config{os.path.sep}train_sz_dim26_units96_h4c512.yaml')
+args = argparse.Namespace(config_filename=f'data{os.path.sep}config{os.path.sep}train_M_R_1119.yaml')
 
 
 def read_cfg_file(filename):
@@ -53,7 +54,7 @@ def read_cfg_file(filename):
     return cfg
 
 def run_model(model, data_iterator, edge_index, edge_attr, device, seq_len, horizon, output_dim,
-              ENABLE_2D_3D_4D_COMPRESSED_FEATURES, ENABLE_5D_FEATURES):
+              four_step_method_included, history_distribution_included, ENABLE_5D_FEATURES):
     """
     return a list of (horizon_i, batch_size, num_nodes, output_dim)
     """
@@ -61,38 +62,33 @@ def run_model(model, data_iterator, edge_index, edge_attr, device, seq_len, hori
     model.eval()
     y_od_pred_list = []
     for _, batch in enumerate(data_iterator):
-        if ENABLE_2D_3D_4D_COMPRESSED_FEATURES and ENABLE_5D_FEATURES:
+        if four_step_method_included and ENABLE_5D_FEATURES and history_distribution_included:
             (x_od, y_od, unfinished, history, yesterday, xtime, ytime, PINN_od_features,
              PINN_od_additional_features, OD_feature_array,
              Time_DepartFreDic_Array,
-             #OD_path_compressed_array,
-             repeated_sparse_2D_tensors, repeated_sparse_3D_tensors, repeated_sparse_4D_tensors,
              repeated_sparse_5D_tensors) = batch
-        elif ENABLE_2D_3D_4D_COMPRESSED_FEATURES:
-            (x_od, y_od, unfinished, history, yesterday, xtime, ytime, PINN_od_features,
-             PINN_od_additional_features, OD_feature_array,
-             Time_DepartFreDic_Array,
-             #OD_path_compressed_array,
-             repeated_sparse_2D_tensors, repeated_sparse_3D_tensors, repeated_sparse_4D_tensors) = batch
-        elif ENABLE_5D_FEATURES:
-            (x_od, y_od, unfinished, history, yesterday, xtime, ytime, PINN_od_features,
-             PINN_od_additional_features, OD_feature_array,
-             Time_DepartFreDic_Array, repeated_sparse_5D_tensors) = batch
-        else:
+        elif four_step_method_included and history_distribution_included:
             (x_od, y_od, unfinished, history, yesterday, xtime, ytime, PINN_od_features,
              PINN_od_additional_features, OD_feature_array,
              Time_DepartFreDic_Array) = batch
+        elif ENABLE_5D_FEATURES and history_distribution_included:
+            (x_od, y_od, unfinished, history, yesterday, xtime, ytime,
+             repeated_sparse_5D_tensors) = batch
+        elif history_distribution_included:
+            (x_od, y_od, unfinished, history, yesterday, xtime, ytime) = batch
+        else:
+            (x_od, y_od, xtime, ytime) = batch
         y_od = y_od[..., :output_dim]
         sequences, sequences_y, y_od = collate_wrapper(
-            x_od=x_od, y_od=y_od, unfinished=unfinished, history=history,
-            yesterday=yesterday, PINN_od_features=PINN_od_features,
-            PINN_od_additional_features=PINN_od_additional_features, OD_feature_array=OD_feature_array,
-            Time_DepartFreDic_Array=Time_DepartFreDic_Array,
+            x_od=x_od, y_od=y_od,
             edge_index=edge_index, edge_attr=edge_attr, device=device, seq_len=seq_len, horizon=horizon,
-            #OD_path_compressed_array=OD_path_compressed_array if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-            repeated_sparse_2D_tensors=repeated_sparse_2D_tensors if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-            repeated_sparse_3D_tensors=repeated_sparse_3D_tensors if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-            repeated_sparse_4D_tensors=repeated_sparse_4D_tensors if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
+            unfinished=unfinished if history_distribution_included else None,
+            history=history if history_distribution_included else None,
+            yesterday=yesterday if history_distribution_included else None,
+            PINN_od_features=PINN_od_features if four_step_method_included else None,
+            PINN_od_additional_features=PINN_od_additional_features if four_step_method_included else None,
+            OD_feature_array=OD_feature_array if four_step_method_included else None,
+            Time_DepartFreDic_Array=Time_DepartFreDic_Array if four_step_method_included else None,
             repeated_sparse_5D_tensors=repeated_sparse_5D_tensors if ENABLE_5D_FEATURES else None
         )
         # (T, N, num_nodes, num_out_channels)
@@ -112,7 +108,8 @@ def evaluate(model,
              seq_Len,
              horizon,
              output_dim,
-             ENABLE_2D_3D_4D_COMPRESSED_FEATURES,
+             four_step_method_included,
+             history_distribution_included,
              ENABLE_5D_FEATURES,
              logger,
              detail=True,
@@ -130,7 +127,8 @@ def evaluate(model,
         seq_len=seq_Len,
         horizon=horizon,
         output_dim=output_dim,
-        ENABLE_2D_3D_4D_COMPRESSED_FEATURES=ENABLE_2D_3D_4D_COMPRESSED_FEATURES,
+        four_step_method_included=four_step_method_included,
+        history_distribution_included=history_distribution_included,
         ENABLE_5D_FEATURES=ENABLE_5D_FEATURES)
 
     evaluate_category = []
@@ -263,14 +261,14 @@ def main(args):
     seq_len = cfg['model']['seq_len']
     horizon = cfg['model']['horizon']
     num_nodes = cfg['model']['num_nodes']
-    ENABLE_2D_3D_4D_COMPRESSED_FEATURES = cfg['domain_knowledge']['ENABLE_2D_3D_4D_COMPRESSED_FEATURES']
+    four_step_method_included = cfg['domain_knowledge_loaded']['four_step_method']
+    history_distribution_included = cfg['domain_knowledge_loaded']['history_distribution']
     ENABLE_5D_FEATURES = cfg['domain_knowledge']['ENABLE_5D_FEATURES']
     Using_GAT_or_RGCN = cfg['domain_knowledge']['Using_GAT_or_RGCN']
 
-    od_type = "OD"
     project_root = Find_project_root()
     hyperparams_path = os.path.join(project_root, f"data{os.path.sep}suzhou{os.path.sep}",
-                                    f'{od_type.upper()}{os.path.sep}hyperparameters.pkl')
+                                    f'hyperparameters.pkl')
     with open(hyperparams_path, 'rb') as f:
         hyperparameters = pickle.load(f)
 
@@ -281,6 +279,11 @@ def main(args):
 
     adj_mx_list = []
     graph_pkl_filename = cfg['data']['graph_pkl_filename']
+
+    trip_generation_included = cfg['domain_knowledge_types_included']['trip_generation']
+    trip_distribution_included = cfg['domain_knowledge_types_included']['trip_distribution']
+    depart_freq_included = cfg['domain_knowledge_types_included']['depart_freq']
+    traffic_assignment_included = cfg['domain_knowledge_types_included']['traffic_assignment']
 
     if not isinstance(graph_pkl_filename, list):
         graph_pkl_filename = [graph_pkl_filename]
@@ -341,12 +344,14 @@ def main(args):
     update = {}
     for category in ['od']:
         update['val_steady_count_' + category] = 0
-        update['last_val_mae_' + category] = 1e6
+        update['last_val_mae_' + category] = 1e60
         update['last_val_mape_net_' + category] = 1e6
 
     horizon = cfg['model']['horizon']
-    with open(f'data{os.path.sep}suzhou{os.path.sep}graph_sz_conn_no_11.pkl', 'rb') as f:
+
+    with open(graph_pkl_filename[0], 'rb') as f:
         graph_sz_conn_no_11 = pickle.load(f, errors='ignore')
+
     row, col = np.nonzero(graph_sz_conn_no_11)
     edge_index = np.array([row, col])
     edge_weight = graph_sz_conn_no_11[row, col]
@@ -361,41 +366,33 @@ def main(args):
         train_iterator = dataset['train_loader'].get_iterator()
         model.train()
         for _, batch in enumerate(train_iterator):
-            if ENABLE_2D_3D_4D_COMPRESSED_FEATURES and ENABLE_5D_FEATURES:
+            if four_step_method_included and ENABLE_5D_FEATURES and history_distribution_included:
                 (x_od, y_od, unfinished, history, yesterday, xtime, ytime, PINN_od_features,
                  PINN_od_additional_features, OD_feature_array,
                  Time_DepartFreDic_Array,
-                 #OD_path_compressed_array,
-                 repeated_sparse_2D_tensors, repeated_sparse_3D_tensors, repeated_sparse_4D_tensors,
                  repeated_sparse_5D_tensors) = batch
-            elif ENABLE_2D_3D_4D_COMPRESSED_FEATURES:
-                (x_od, y_od, unfinished, history, yesterday, xtime, ytime, PINN_od_features,
-                 PINN_od_additional_features, OD_feature_array,
-                 Time_DepartFreDic_Array,
-                 #OD_path_compressed_array,
-                 repeated_sparse_2D_tensors, repeated_sparse_3D_tensors, repeated_sparse_4D_tensors) = batch
-            elif ENABLE_5D_FEATURES:
-                (x_od, y_od, unfinished, history, yesterday, xtime, ytime, PINN_od_features,
-                 PINN_od_additional_features, OD_feature_array,
-                 Time_DepartFreDic_Array, repeated_sparse_5D_tensors) = batch
-            else:
+            elif four_step_method_included and history_distribution_included:
                 (x_od, y_od, unfinished, history, yesterday, xtime, ytime, PINN_od_features,
                  PINN_od_additional_features, OD_feature_array,
                  Time_DepartFreDic_Array) = batch
+            elif ENABLE_5D_FEATURES and history_distribution_included:
+                (x_od, y_od, unfinished, history, yesterday, xtime, ytime, repeated_sparse_5D_tensors) = batch
+            elif history_distribution_included:
+                (x_od, y_od, unfinished, history, yesterday, xtime, ytime) = batch
+            else:
+                (x_od, y_od, xtime, ytime) = batch
 
             optimizer.zero_grad()
             y_od = y_od[:, :horizon, :, :output_dim]
             sequences, sequences_y, y_od = collate_wrapper(
                 x_od=x_od, y_od=y_od,
-                unfinished=unfinished, history=history, yesterday=yesterday,
-                PINN_od_features=PINN_od_features,
-                PINN_od_additional_features=PINN_od_additional_features,
-                OD_feature_array=OD_feature_array,
-                Time_DepartFreDic_Array=Time_DepartFreDic_Array,
-                #OD_path_compressed_array=OD_path_compressed_array if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-                repeated_sparse_2D_tensors=repeated_sparse_2D_tensors if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-                repeated_sparse_3D_tensors=repeated_sparse_3D_tensors if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
-                repeated_sparse_4D_tensors=repeated_sparse_4D_tensors if ENABLE_2D_3D_4D_COMPRESSED_FEATURES else None,
+                unfinished=unfinished if history_distribution_included else None,
+                history=history if history_distribution_included else None,
+                yesterday=yesterday if history_distribution_included else None,
+                PINN_od_features=PINN_od_features if four_step_method_included else None,
+                PINN_od_additional_features=PINN_od_additional_features if four_step_method_included else None,
+                OD_feature_array=OD_feature_array if four_step_method_included else None,
+                Time_DepartFreDic_Array=Time_DepartFreDic_Array if four_step_method_included else None,
                 repeated_sparse_5D_tensors=repeated_sparse_5D_tensors if ENABLE_5D_FEATURES else None,
                 edge_index=edge_index, edge_attr=edge_attr, device=device,
                 seq_len=seq_len, horizon=horizon
@@ -407,52 +404,57 @@ def main(args):
             y_od = scaler_od_torch.inverse_transform(y_od)
             loss_od = criterion(y_od_pred, y_od)
 
-            cost_PINN = 0
-            for i_sub_features in range(batch_size):
-                sub_PINN_od_features = PINN_od_features[i_sub_features]
-                sub_od_additional_features = PINN_od_additional_features[i_sub_features]
-                # PINN Loss
-                zero_tensor = torch.zeros((seq_len, num_nodes), device=device)
-                nested_list_with_arrays = [zero_tensor[i].cpu().numpy() for i in range(seq_len)]
-                sub_PINN_od_features_list_of_arrays = [sub_PINN_od_features[i] for i in range(seq_len)]
-                sub_od_additional_features_list_of_arrays = [sub_od_additional_features[i] for i in range(seq_len)]
-                signal_dict = {
-                    'features': sub_PINN_od_features_list_of_arrays,
-                    'targets': nested_list_with_arrays,
-                    'additional_feature': sub_od_additional_features_list_of_arrays,
-                    'edge_index': edge_index,
-                    'edge_weight': edge_weight
-                }
-                trip_gnr_signal = StaticGraphTemporalSignal(
-                    features=signal_dict["features"],
-                    targets=signal_dict["targets"],
-                    additional_feature1=signal_dict["additional_feature"],
-                    edge_index=signal_dict["edge_index"],
-                    edge_weight=signal_dict["edge_weight"]
-                )
+            if trip_generation_included:
+                cost_PINN = 0
+                for i_sub_features in range(batch_size):
+                    sub_PINN_od_features = PINN_od_features[i_sub_features]
+                    sub_od_additional_features = PINN_od_additional_features[i_sub_features]
+                    # PINN Loss
+                    zero_tensor = torch.zeros((seq_len, num_nodes), device=device)
+                    nested_list_with_arrays = [zero_tensor[i].cpu().numpy() for i in range(seq_len)]
+                    sub_PINN_od_features_list_of_arrays = [sub_PINN_od_features[i] for i in range(seq_len)]
+                    sub_od_additional_features_list_of_arrays = [sub_od_additional_features[i] for i in range(seq_len)]
+                    signal_dict = {
+                        'features': sub_PINN_od_features_list_of_arrays,
+                        'targets': nested_list_with_arrays,
+                        'additional_feature': sub_od_additional_features_list_of_arrays,
+                        'edge_index': edge_index,
+                        'edge_weight': edge_weight
+                    }
+                    trip_gnr_signal = StaticGraphTemporalSignal(
+                        features=signal_dict["features"],
+                        targets=signal_dict["targets"],
+                        additional_feature1=signal_dict["additional_feature"],
+                        edge_index=signal_dict["edge_index"],
+                        edge_weight=signal_dict["edge_weight"]
+                    )
 
-                for str_prdc_attr in ("prdc", "attr"):
-                    RecurrentGCN_trip_prdc = RecurrentGCN(node_features=RGCN_node_features,
-                                                          hidden_units=RGCN_hidden_units, output_dim=RGCN_output_dim,
-                                                          K=RGCN_K)
+                    for str_prdc_attr in ("prdc", "attr"):
+                        RecurrentGCN_trip_prdc = RecurrentGCN(node_features=RGCN_node_features,
+                                                              hidden_units=RGCN_hidden_units,
+                                                              output_dim=RGCN_output_dim,
+                                                              K=RGCN_K)
 
-                    RecurrentGCN_model_path = os.path.join(project_root, f"data{os.path.sep}suzhou{os.path.sep}",
-                                                           f'{od_type.upper()}{os.path.sep}{str_prdc_attr}_RecurrentGCN_model.pth')
-                    RecurrentGCN_trip_prdc.load_state_dict(torch.load(RecurrentGCN_model_path))
-                    RecurrentGCN_trip_prdc.eval()
+                        RecurrentGCN_model_path = os.path.join(project_root, f"data{os.path.sep}suzhou{os.path.sep}",
+                                                               f'{str_prdc_attr}_RecurrentGCN_model.pth')
+                        RecurrentGCN_trip_prdc.load_state_dict(torch.load(RecurrentGCN_model_path))
+                        RecurrentGCN_trip_prdc.eval()
 
-                    if(str_prdc_attr=='prdc'):
-                        y_od_pred_sum = y_od_pred.sum(dim=-1)
-                    else:
-                        y_od_pred_sum = y_od_pred.sum(dim=-2)
+                        if (str_prdc_attr == 'prdc'):
+                            y_od_pred_sum = y_od_pred.sum(dim=-1)
+                        else:
+                            y_od_pred_sum = y_od_pred.sum(dim=-2)
 
-                    with torch.no_grad():
-                        for snap_time, snapshot in enumerate(trip_gnr_signal):
-                            y_hat = RecurrentGCN_trip_prdc(snapshot.x, snapshot.edge_index, snapshot.edge_attr)
-                            y_hat = y_hat.clone().detach().requires_grad_(True).to(device)
-                            y_od_pred_sum_ = y_od_pred_sum[i_sub_features][snap_time]
-                            cost_PINN = cost_PINN + abs(torch.mean((y_hat - y_od_pred_sum_)))
-            loss = loss_od + cfg['model']['PINN_value'] * cost_PINN
+                        with torch.no_grad():
+                            for snap_time, snapshot in enumerate(trip_gnr_signal):
+                                y_hat = RecurrentGCN_trip_prdc(snapshot.x, snapshot.edge_index, snapshot.edge_attr)
+                                y_hat = y_hat.clone().detach().requires_grad_(True).to(device)
+                                y_od_pred_sum_ = y_od_pred_sum[i_sub_features][snap_time]
+                                cost_PINN = cost_PINN + abs(torch.mean((y_hat - y_od_pred_sum_)))
+                loss = loss_od + cfg['model']['PINN_value'] * cost_PINN
+            else:
+                loss = loss_od
+
             total_loss += loss.item()
             loss.backward()
 
@@ -471,7 +473,8 @@ def main(args):
                               seq_Len=seq_len,
                               horizon=horizon,
                               output_dim=output_dim,
-                              ENABLE_2D_3D_4D_COMPRESSED_FEATURES=ENABLE_2D_3D_4D_COMPRESSED_FEATURES,
+                              four_step_method_included=four_step_method_included,
+                              history_distribution_included=history_distribution_included,
                               ENABLE_5D_FEATURES=ENABLE_5D_FEATURES,
                               logger=logger,
                               detail=False,
@@ -516,7 +519,8 @@ def main(args):
                      seq_Len=seq_len,
                      horizon=horizon,
                      output_dim=output_dim,
-                     ENABLE_2D_3D_4D_COMPRESSED_FEATURES=ENABLE_2D_3D_4D_COMPRESSED_FEATURES,
+                     four_step_method_included=four_step_method_included,
+                     history_distribution_included=history_distribution_included,
                      ENABLE_5D_FEATURES=ENABLE_5D_FEATURES,
                      logger=logger,
                      cfg=cfg)

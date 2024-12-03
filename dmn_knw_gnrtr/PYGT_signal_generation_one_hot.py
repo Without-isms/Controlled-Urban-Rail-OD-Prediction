@@ -17,11 +17,10 @@ from metro_data_convertor.Find_project_root import Find_project_root
 # Generating pytorch geographical-temporal signal
 # Used in generating trip-generation-based loss function
 
-def PYGT_signal_generation(od_type, base_dir, prefix, station_manager_dict_name, graph_sz_conn_no_name,
+def PYGT_signal_generation(base_dir, prefix, station_manager_dict_name, graph_sz_conn_no_name,
                            station_manager_dict_file_path, graph_sz_conn_root, train_result_array_OD_or_DO_file_path,
                            normalization_params_file_path, str_prdc_attr, Using_lat_lng_or_index):
 
-    dir_path = os.path.join(base_dir, od_type.upper())
     with open(station_manager_dict_file_path, 'rb') as f:
         station_manager_dict = pickle.load(f, errors='ignore')
     with open(graph_sz_conn_root, 'rb') as f:
@@ -29,7 +28,7 @@ def PYGT_signal_generation(od_type, base_dir, prefix, station_manager_dict_name,
     with open(train_result_array_OD_or_DO_file_path, 'rb') as f:
         train_result_array_OD_or_DO = pickle.load(f, errors='ignore')
 
-    signal_dict_filename = os.path.join(dir_path, f'{prefix}_{od_type}_{str_prdc_attr}_signal_dict.pkl')
+    signal_dict_filename = os.path.join(base_dir, f'{prefix}_{str_prdc_attr}_signal_dict.pkl')
     Trip_Generation_TYPE=[]
     if str_prdc_attr=="prdc":
         Trip_Generation_TYPE='Trip_Production_In_Station_or_Out_Station'
@@ -142,28 +141,22 @@ def PYGT_signal_generation(od_type, base_dir, prefix, station_manager_dict_name,
     with open(signal_dict_filename, 'wb') as f:
         pickle.dump(signal_dict, f)
 
-project_root = Find_project_root()
+"""project_root = Find_project_root()
 base_dir = os.path.join(project_root, f"data{os.path.sep}suzhou")
 prefix = "train"
-od_type="OD"
 train_sql="SELECT * FROM suzhou2023_0509"
 test_sql="SELECT * FROM suzhou20230511_all"
 val_sql="SELECT * FROM suzhou20230510_all"
 station_manager_dict_name='station_manager_dict_no_11.pkl'
 graph_sz_conn_no_name='graph_sz_conn_no_11.pkl'
-dir_path = os.path.join(base_dir, od_type.upper())
 station_manager_dict_file_path = os.path.join(base_dir, f"{station_manager_dict_name}")
 graph_sz_conn_root = os.path.join(project_root, f"data{os.path.sep}suzhou{os.path.sep}{graph_sz_conn_no_name}")
-train_result_array_OD_or_DO_file_path = os.path.join(project_root, dir_path, f'{prefix}_result_array_{od_type.upper()}.pkl')
+train_result_array_OD_or_DO_file_path = os.path.join(base_dir, f'{prefix}_result_array_.pkl')
 normalization_params_file_path = os.path.join(project_root, f'data{os.path.sep}suzhou', 'normalization_params.pkl')
 Using_lat_lng_or_index = "index"
 
 for str_prdc_attr in ("prdc", "attr"):
-    PYGT_signal_generation("OD", base_dir, prefix, station_manager_dict_name, graph_sz_conn_no_name,
-                           station_manager_dict_file_path, graph_sz_conn_root,
-                           train_result_array_OD_or_DO_file_path,
-                           normalization_params_file_path, str_prdc_attr, Using_lat_lng_or_index)
-    """PYGT_signal_generation("DO", base_dir, prefix, station_manager_dict_name, graph_sz_conn_no_name,
+    PYGT_signal_generation(base_dir, prefix, station_manager_dict_name, graph_sz_conn_no_name,
                            station_manager_dict_file_path, graph_sz_conn_root,
                            train_result_array_OD_or_DO_file_path,
                            normalization_params_file_path, str_prdc_attr, Using_lat_lng_or_index)"""

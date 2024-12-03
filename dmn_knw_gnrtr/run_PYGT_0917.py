@@ -18,8 +18,8 @@ class RecurrentGCN(torch.nn.Module):
         h = self.linear(h)
         return h
 
-def run_PYGT(base_dir, prefix, od_type, str_prdc_attr, RGCN_node_features, RGCN_hidden_units, RGCN_output_dim, RGCN_K, lr, epoch_num, train_ratio):
-    dir_path = os.path.join(base_dir, f'{od_type.upper()}{os.path.sep}{prefix}_{od_type.upper()}_{str_prdc_attr}_signal_dict.pkl')
+def run_PYGT(base_dir, prefix, str_prdc_attr, RGCN_node_features, RGCN_hidden_units, RGCN_output_dim, RGCN_K, lr, epoch_num, train_ratio):
+    dir_path = os.path.join(base_dir, f'{prefix}_{str_prdc_attr}_signal_dict.pkl')
     with open(dir_path, 'rb') as f:
         signal_dict = pickle.load(f, errors='ignore')
 
@@ -63,7 +63,7 @@ def run_PYGT(base_dir, prefix, od_type, str_prdc_attr, RGCN_node_features, RGCN_
 
         print(f"Epoch {epoch + 1}/{epoch_num}, MSE: {cost_PINN.item():.4f}, MAPE: {avg_mape.item():.4f}%")
 
-    model_save_path = os.path.join(base_dir, f'{od_type.upper()}{os.path.sep}{str_prdc_attr}_RecurrentGCN_model.pth')
+    model_save_path = os.path.join(base_dir, f'{str_prdc_attr}_RecurrentGCN_model.pth')
     torch.save(RecurrentGCN_model.state_dict(), model_save_path)
 
     hyperparameters = {
@@ -73,12 +73,11 @@ def run_PYGT(base_dir, prefix, od_type, str_prdc_attr, RGCN_node_features, RGCN_
         "RGCN_K": RGCN_K
     }
 
-    hyperparams_save_path = os.path.join(base_dir, f'{od_type.upper()}{os.path.sep}hyperparameters.pkl')
+    hyperparams_save_path = os.path.join(base_dir, f'hyperparameters.pkl')
     with open(hyperparams_save_path, 'wb') as f:
         pickle.dump(hyperparameters, f)
 
-"""od_type="OD"
-base_dir=f"data{os.path.sep}suzhou"
+"""base_dir=f"data{os.path.sep}suzhou"
 prefix="train"
 str_prdc_attr=[]
-run_PYGT(base_dir,prefix,od_type, str_prdc_attr)"""
+run_PYGT(base_dir,prefix,str_prdc_attr)"""

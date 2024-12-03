@@ -1,14 +1,15 @@
-# 忽略 Python 缓存文件
+# Ignore Python cache files
 __pycache__/
 
-# 忽略数据检查点
+# Ignore data checkpoints
 data/checkpoint/
 
-# 忽略生成的文件
+# Ignore generated files
 *.pkl
 *.pt
 *.pkl
 
-# 忽略特定目录
+# Ignore specific directories
 archieve/
 data/
+test_tools/

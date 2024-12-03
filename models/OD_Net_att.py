@@ -21,15 +21,35 @@ class ODNet_att(torch.nn.Module):
         super(ODNet_att, self).__init__()
         self.logger = logger
         self.cfg = cfg
+
+        self.trip_distribution_included = cfg['domain_knowledge_types_included']['trip_distribution']
+        self.depart_freq_included = cfg['domain_knowledge_types_included']['depart_freq']
+        self.traffic_assignment_included = cfg['domain_knowledge_types_included']['traffic_assignment']
+
         self.additional_section_feature_dim = cfg['model']['additional_section_feature_dim']
         self.additional_frequency_feature_dim = cfg['model']['additional_frequency_feature_dim']
         self.additional_distribution_dim = cfg['model']['additional_distribution_dim']
+
+        self.history_distribution = cfg['domain_knowledge_loaded']['history_distribution']
+
         self.num_nodes = cfg['model']['num_nodes']
         self.num_output_dim = cfg['model']['output_dim']
         self.num_units = cfg['model']['rnn_units']
         self.num_decoder_input_dim = cfg['model']['input_dim']
-        self.num_finished_input_dim = cfg['model']['input_dim'] + self.additional_section_feature_dim + self.additional_frequency_feature_dim+self.additional_distribution_dim
-        self.num_unfinished_input_dim = cfg['model']['input_dim'] + self.additional_section_feature_dim + self.additional_frequency_feature_dim+self.additional_distribution_dim
+
+        self.num_finished_input_dim = cfg['model']['input_dim']
+        self.num_unfinished_input_dim = cfg['model']['input_dim']
+
+        if self.trip_distribution_included:
+            self.num_finished_input_dim += self.additional_distribution_dim
+            self.num_unfinished_input_dim += self.additional_distribution_dim
+        if self.depart_freq_included:
+            self.num_finished_input_dim += self.additional_frequency_feature_dim
+            self.num_unfinished_input_dim += self.additional_frequency_feature_dim
+        if self.traffic_assignment_included:
+            self.num_finished_input_dim += self.additional_section_feature_dim
+            self.num_unfinished_input_dim += self.additional_section_feature_dim
+
         self.num_rnn_layers = cfg['model']['num_rnn_layers']
         self.seq_len = cfg['model']['seq_len']
         self.horizon = cfg['model']['horizon']
@@ -127,12 +147,20 @@ class ODNet_att(torch.nn.Module):
         return pe.unsqueeze(0).transpose(0, 1)
 
     def encoder_first_layer(self,
-                            batch,
-                            finished_hidden,
-                            long_his_hidden,
-                            short_his_hidden,
-                            edge_index,
-                            edge_attr=None):
+                            *args,
+                            **kwargs):
+        if len(args) == 6:
+            batch, finished_hidden, long_his_hidden, short_his_hidden, edge_index, edge_attr = args
+            return self._encoder_first_layer_v1(batch, finished_hidden, long_his_hidden, short_his_hidden, edge_index,
+                                                edge_attr)
+        elif len(args) == 4:
+            batch, finished_hidden, edge_index, edge_attr = args
+            return self._encoder_first_layer_v2(batch, finished_hidden, edge_index, edge_attr)
+        else:
+            raise ValueError("Invalid arguments for encoder_first_layer")
+
+    def _encoder_first_layer_v1(self, batch, finished_hidden, long_his_hidden, short_his_hidden, edge_index,
+                                edge_attr=None):
         finished_out, finished_hidden = self.encoder_first_finished_cells(inputs=batch.x_od,
                                                                           edge_index=edge_index,
                                                                           edge_attr=edge_attr,
@@ -140,7 +168,6 @@ class ODNet_att(torch.nn.Module):
 
         enc_first_hidden = finished_hidden
         enc_first_out = finished_out
-
         long_his_out, long_his_hidden = self.encoder_first_unfinished_cells(inputs=batch.history,
                                                                             edge_index=edge_index,
                                                                             edge_attr=edge_attr,
@@ -165,8 +192,16 @@ class ODNet_att(torch.nn.Module):
         attn_output=self.gate_layer(attn_output.permute(1, 2, 0))
         enc_first_out = finished_out + attn_output.permute(2, 1, 0).reshape(self.num_nodes * self.batch_size, self.num_units)
         enc_first_hidden = enc_first_hidden + attn_output.permute(2, 1, 0).reshape(self.num_nodes * self.batch_size, self.num_units)
-
         return enc_first_out, finished_hidden, long_his_hidden, short_his_hidden, enc_first_hidden
+
+    def _encoder_first_layer_v2(self, batch, finished_hidden, edge_index, edge_attr=None):
+        finished_out, finished_hidden = self.encoder_first_finished_cells(inputs=batch.x_od,
+                                                                          edge_index=edge_index,
+                                                                          edge_attr=edge_attr,
+                                                                          hidden=finished_hidden)
+        enc_first_hidden = finished_hidden
+        enc_first_out = finished_out
+        return enc_first_out, finished_hidden, enc_first_hidden
 
     def encoder_second_layer(self,
                              index,
